@@ -1,0 +1,82 @@
+# Copyright (c) 2019-2020-2021-2022 Luca Cappa
+# Released under the term specified in file LICENSE.txt
+# SPDX short identifier: MIT
+#
+# The peculiarity of this workflow is that assumes vcpkg stored as a submodule of this repository.
+# This workflow does the following:
+# - Restores vcpkg artifacts from cache.
+# - Sets up vcpkg if needed, then run CMake with CMakePreset.json using a configuration
+#   that leverages the vcpkg's toolchain file. This will automatically run vcpkg to install dependencies
+#   described by the vcpkg.json manifest file. It will be a no-op if those are restored from cache.
+# - Finally builds the sources with Ninja.
+name: Build_Mac
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - .github/workflows/lukka_ci_mac.yml
+      - .github/workflows/lukka_ci_mac_arm.yml
+      - .github/workflows/lukka_ci_win.yml
+      - '**/BenchmarkResults/**'
+      - '**/FunctionTests/**'
+      - '**/**.md'
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - .github/workflows/lukka_ci_mac.yml
+      - .github/workflows/lukka_ci_mac_arm.yml
+      - .github/workflows/lukka_ci_win.yml
+      - '**/BenchmarkResults/**'
+      - '**/FunctionTests/**'
+      - '**/**.md'
+  workflow_dispatch:
+
+jobs:
+  job:
+    name: ${{ matrix.os }}-${{ github.workflow }}
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+      #os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [macos-latest]
+        # yamllint disable-line rule:trailing-spaces
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup ccache action
+        uses: Chocobo1/setup-ccache-action@v1.4.3
+
+      - uses: lukka/get-cmake@latest
+      - name: dir
+        run: find $RUNNER_WORKSPACE
+        shell: bash
+
+      - name: Restore artifacts, or setup vcpkg for building artifacts
+        uses: lukka/run-vcpkg@v11.5
+        id: runvcpkg
+        with:
+          # This one is not needed, as it is the default value anyway.
+          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+          vcpkgJsonGlob: '**/vcpkg.json'
+
+      - name: List $RUNNER_WORKSPACE before build
+        run: find $RUNNER_WORKSPACE
+        shell: bash
+      - name: Prints output of run-vcpkg's (ninja-release-vcpkg) action.
+        run: echo "root='${{ steps.runvcpkg.outputs.RUNVCPKG_VCPKG_ROOT_OUT }}', triplet='${{ steps.runvcpkg.outputs.RUNVCPKG_VCPKG_DEFAULT_TRIPLET_OUT }}' "
+      - name: Run CMake+vcpkg+Ninja
+        uses: lukka/run-cmake@v10.7
+        id: runcmake
+        with:
+          cmakeListsTxtPath: '${{ github.workspace }}/CMakeLists.txt'
+          configurePreset: 'ninja-release-vcpkg'
+          buildPreset: 'ninja-release-vcpkg'
+      - name: List $RUNNER_WORKSPACE after build
+        run: find $RUNNER_WORKSPACE
+        shell: bash
