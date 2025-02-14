@@ -16,3 +16,13 @@ Then as an extension a python binding can be build.
 * Write DCMs
 * Read encrypted file
   
+
+
+# How to build
+
+Run the following from the repository root:
+
+```bash
+cmake -DCMAKE_BUILD_TYPE=Release --preset ninja-release-vcpkg -S . -B ./builds/ninja-release-vcpkg
+cmake --build ./builds/ninja-release-vcpkg
+```
