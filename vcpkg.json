@@ -1,11 +1,11 @@
 {
-  "name": "open3SDCM",
+  "name": "open3sdcm",
   "version-string": "0.1.0",
-  "description": "Fast and Robust 3D Boolean on Polyhedra using implicit plane-based coordinates",
+  "description": "Toolbox for converting 3Shape DCM files into open 3d format",
   "dependencies": [
     "boost-test",
 	"boost-program-options",
-	"fmt"
+	"fmt",
 	"poco",
 	"spdlog",
 	"assimp"
