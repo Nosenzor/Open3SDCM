@@ -16,27 +16,21 @@ on:
       - main
     paths-ignore:
       - .github/workflows/lukka_ci_mac.yml
-      - .github/workflows/lukka_ci_mac_arm.yml
       - .github/workflows/lukka_ci_win.yml
-      - '**/BenchmarkResults/**'
-      - '**/FunctionTests/**'
       - '**/**.md'
   pull_request:
     branches:
       - main
     paths-ignore:
       - .github/workflows/lukka_ci_mac.yml
-      - .github/workflows/lukka_ci_mac_arm.yml
       - .github/workflows/lukka_ci_win.yml
-      - '**/BenchmarkResults/**'
-      - '**/FunctionTests/**'
       - '**/**.md'
   workflow_dispatch:
 
 jobs:
   job:
     name: ${{ matrix.os }}-${{ github.workflow }}
-    runs-on: macos-14
+    runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
