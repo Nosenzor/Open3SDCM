@@ -12,3 +12,5 @@ Xcode/**
 cmake-build*/**
 
 .idea/**
+/builds/
+/cmake-build-debug/
