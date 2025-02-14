@@ -1,0 +1,13 @@
+{
+  "name": "open3SDCM",
+  "version-string": "0.1.0",
+  "description": "Fast and Robust 3D Boolean on Polyhedra using implicit plane-based coordinates",
+  "dependencies": [
+    "boost-test",
+	"boost-program-options",
+	"fmt"
+	"poco",
+	"spdlog",
+	"assimp"
+	  ]
+}

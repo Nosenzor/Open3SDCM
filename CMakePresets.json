@@ -1,0 +1,103 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "ninja-release-vcpkg",
+      "displayName": "Ninja Configure Settings (Release with vcpkg)",
+      "description": "Sets build and install directories",
+      "binaryDir": "${sourceDir}/builds/${presetName}",
+      "generator": "Ninja",
+      "toolchainFile": "./vcpkg/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_TOOLCHAIN_FILE": {
+        "type": "FILEPATH",
+        "value": "./vcpkg/scripts/buildsystems/vcpkg.cmake"
+        }
+      }
+    },
+    {
+      "name": "ninja-toolchain",
+      "displayName": "Ninja Configure Settings with toolchain",
+      "description": "Sets build and install directories",
+      "binaryDir": "${sourceDir}/builds/${presetName}-toolchain",
+      "generator": "Ninja",
+      "toolchainFile": "$env{TOOLCHAINFILE}"
+    },
+    {
+      "name": "ninja-multi-vcpkg",
+      "displayName": "Ninja Multi-Config Configure Settings",
+      "description": "Configure with vcpkg toolchain",
+      "binaryDir": "${sourceDir}/builds/${presetName}",
+      "generator": "Ninja Multi-Config",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": {
+          "type": "FILEPATH",
+          "value": "./vcpkg/scripts/buildsystems/vcpkg.cmake"
+        }
+      }
+    },
+    {
+      "name": "msbuild-vcpkg",
+      "displayName": "MSBuild (vcpkg toolchain) Configure Settings",
+      "description": "Configure with VS generators and with vcpkg toolchain",
+      "binaryDir": "${sourceDir}/builds/${presetName}",
+      "generator": "Visual Studio 17 2022",
+      "architecture": {
+        "strategy": "set",
+        "value": "x64"
+      },
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": {
+          "type": "FILEPATH",
+          "value": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+        }
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "ninja-release-vcpkg",
+      "configurePreset": "ninja-release-vcpkg",
+      "displayName": "Build Release with Ninja with vcpkg",
+      "description":  "Build Release with Ninja with vcpkg"
+    },
+    {
+      "name": "ninja-multi-vcpkg",
+      "configurePreset": "ninja-multi-vcpkg",
+      "displayName": "Build ninja-multi-vcpkg",
+      "description": "Build ninja-multi-vcpkg Configurations"
+    },
+    {
+      "name": "ninja-toolchain",
+      "configurePreset": "ninja-toolchain",
+      "displayName": "Build ninja-toolchain",
+      "description": "Build ninja with a toolchain"
+    },
+    {
+      "name": "msbuild-vcpkg",
+      "configurePreset": "msbuild-vcpkg",
+      "displayName": "Build MSBuild",
+      "description": "Build with MSBuild (VS)"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "ninja-release-vcpkg",
+      "configurePreset": "ninja-release-vcpkg"
+    },
+    {
+      "name": "ninja-multi-vcpkg",
+      "configurePreset": "ninja-multi-vcpkg"
+    },
+    {
+      "name": "default-vs",
+      "configurePreset": "msbuild-vcpkg"
+    }
+  ]
+}
