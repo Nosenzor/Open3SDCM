@@ -1,0 +1,14 @@
+.vs/**
+*.db
+*.ipch
+*.opendb
+*.sqlite
+*.mkDG
+**/CMakeFiles/*
+**/Release/**
+*.vcxproj
+*.sln
+Xcode/**
+cmake-build*/**
+
+.idea/**
