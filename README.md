@@ -54,3 +54,7 @@ Thus vertices coordinates and triangles are encoded in base64.
 </HPS>
 
 ```
+
+# Useful links
+
+* https://dcm2stl.appspot.com/ : A web service that can convert DCM to STL

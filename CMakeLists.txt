@@ -143,4 +143,6 @@ if (${CMAKE_CXX_COMPILER_ID} STREQUAL "MSVC" OR WIN32)
     add_definitions(-DNOMINMAX)
 endif()
 
+
+add_subdirectory(Lib)
 add_subdirectory(CLI)
