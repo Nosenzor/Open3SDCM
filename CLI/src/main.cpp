@@ -153,7 +153,8 @@ int main(int argc, const char** argv)
 
   for (const auto& inputFile : AllInFiles)
   {
-    Open3SDCM::ParseDCM(inputFile);
+    Open3SDCM::DCMParser Parser;
+    Parser.ParseDCM(inputFile);
   }
 
   return 0;
