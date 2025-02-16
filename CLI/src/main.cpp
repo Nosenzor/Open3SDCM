@@ -135,8 +135,10 @@ int main(int argc, const char** argv)
 
     auto now = std::chrono::system_clock::now();
     auto now_t = std::chrono::system_clock::to_time_t(now);
+    std::tm now_tm{};
+    localtime_r(&now_t, &now_tm);
     std::stringstream Date;
-    Date << std::put_time(std::localtime(&now_t), "%Y-%m-%d-%H-%M-%S");
+    Date << std::put_time(&now_tm, "%Y-%m-%d-%H-%M-%S");
     OutputDir /= Date.str();
     bool CreateDir = fs::create_directories(OutputDir);
     if (CreateDir)
