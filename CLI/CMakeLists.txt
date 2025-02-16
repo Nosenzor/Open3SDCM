@@ -22,12 +22,17 @@ find_package(Boost REQUIRED COMPONENTS  program_options)
 find_package(Poco CONFIG REQUIRED COMPONENTS XML JSON Zip)
 find_package(assimp CONFIG REQUIRED)
 
+target_include_directories(${PROJECT_NAME} PRIVATE
+    "../Lib/src"
+)
+
 target_include_system_directories( ${PROJECT_NAME} PRIVATE
     ${Boost_INCLUDE_DIRS}
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE Open3SDCM_project_options Open3SDCM_project_warnings
-    )
+        Open3SDCMLib
+)
 
 target_link_system_libraries(${PROJECT_NAME} PRIVATE
     Boost::program_options

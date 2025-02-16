@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 # set the project name
-project(OPen3SDCMLib VERSION 0.1 LANGUAGES CXX)
+project(Open3SDCMLib VERSION 0.1 LANGUAGES CXX)
 
 # specify the C++ standard
 set(CMAKE_CXX_STANDARD 20)
@@ -14,12 +14,13 @@ endif ()
 find_package(Poco CONFIG REQUIRED COMPONENTS XML JSON Zip)
 
 set(SOURCES
-        ParseDcm.h
-        ParseDcm.cpp
+        src/ParseDcm.h
+        src/ParseDcm.cpp
 )
 
 
 add_library(${PROJECT_NAME} STATIC ${SOURCES})
+
 
 #  External include : this will filter Warnings from external libraries
 target_include_system_directories(${PROJECT_NAME} PRIVATE

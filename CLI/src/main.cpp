@@ -22,11 +22,13 @@
 #include "Poco/Zip/ZipArchive.h"
 
 
+#include "ParseDcm.h"
+
 namespace po = boost::program_options;
 namespace fs = std::filesystem;
 
+constexpr std::array AcceptedDCMExtensions = {".dcm", ".DCM"};
 
-constexpr auto SubdirSize = 1000U;
 namespace internal
 {
   std::vector<std::filesystem::path> PopulateFiles(const std::filesystem::path& iDir)
@@ -39,9 +41,14 @@ namespace internal
 
       if (!dir_entry.path().filename().string().starts_with('.'))
       {
-        if(fs::is_regular_file(dir_entry.path()))
+        fmt::print("Found file extension: {}\n", dir_entry.path().extension().string());
+        if(fs::is_regular_file(dir_entry.path()) &&
+          std::any_of(AcceptedDCMExtensions.begin(), AcceptedDCMExtensions.end(),
+            [&](const auto & accepted_extension) {
+              return accepted_extension == dir_entry.path().extension().string();
+            }))
         {
-          AllInFiles.push_back(dir_entry.path());
+            AllInFiles.push_back(dir_entry.path());
         }
 
       }
@@ -142,6 +149,10 @@ int main(int argc, const char** argv)
     }
   }
 
+  for (const auto& inputFile : AllInFiles)
+  {
+    Open3SDCM::ParseDCM(inputFile);
+  }
 
   return 0;
 }
