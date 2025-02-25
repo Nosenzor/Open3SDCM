@@ -228,7 +228,7 @@ namespace Open3SDCM
 
       //Parse vertices
       m_Vertices=ParseVertices(BinaryNodes);
-      fmt::print("Expected to get {} floats ({} vertices)\n", m_Vertices.size(), m_Vertices.size() / 3);
+      fmt::print(" {} floats ({} vertices) have been read from buffer\n", m_Vertices.size(), m_Vertices.size() / 3);
       if (m_Vertices.size() != NbVertices * 3)
       {
         fmt::print("Error: Expected to get {} vertices but got {}\n", NbVertices, m_Vertices.size() / 3);
