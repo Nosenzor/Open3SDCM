@@ -55,6 +55,8 @@ Thus vertices coordinates and triangles are encoded in base64.
 
 ```
 
+A documentation of the HPS (Himsa Packed Scan) format can be found [here](https://himsanoah.atlassian.net/wiki/spaces/AD/pages/1309803049/Packed+Scan+Standard)
+
 Vertices are in float format (4 bytes per coordinates) thus 12 bytes per vertex.
 
 
