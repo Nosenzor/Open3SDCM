@@ -44,10 +44,10 @@ namespace Open3SDCM
     try
     {
       // Read the file content
-      Poco::File file(filePath);
+      Poco::File file(filePath.string());
       if (!file.exists())
       {
-        throw Poco::FileNotFoundException("File not found: " / filePath);
+        throw Poco::FileNotFoundException(fmt::format("File not found: {}", filePath.string()));
       }
 
       std::ifstream fileStream(filePath);

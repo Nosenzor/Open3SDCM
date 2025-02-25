@@ -134,12 +134,9 @@ int main(int argc, const char** argv)
     OutputDir = vm["output_dir"].as<std::filesystem::path>();
 
     auto now = std::chrono::system_clock::now();
-    auto now_t = std::chrono::system_clock::to_time_t(now);
-    std::tm now_tm{};
-    localtime_r(&now_t, &now_tm);
-    std::stringstream Date;
-    Date << std::put_time(&now_tm, "%Y-%m-%d-%H-%M-%S");
-    OutputDir /= Date.str();
+    auto timestamp = std::format("{:%Y-%m-%d-%H-%M-%S}", std::chrono::system_clock::now());
+    OutputDir /= timestamp;
+
     bool CreateDir = fs::create_directories(OutputDir);
     if (CreateDir)
     {
