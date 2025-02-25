@@ -23,16 +23,19 @@
 
 #include <fmt/ostream.h>
 namespace fs = std::filesystem;
+
 namespace Open3SDCM
 {
 
-  struct Vertex {
+  struct Vertex
+  {
     float x;
     float y;
     float z;
   };
 
-  struct Facet {
+  struct Facet
+  {
     Vertex normal;
     Vertex v1;
     Vertex v2;
@@ -45,10 +48,7 @@ namespace Open3SDCM
     {
       // Read the file content
       Poco::File file(filePath.string());
-      if (!file.exists())
-      {
-        throw Poco::FileNotFoundException(fmt::format("File not found: {}", filePath.string()));
-      }
+      if (!file.exists()) { throw Poco::FileNotFoundException(fmt::format("File not found: {}", filePath.string())); }
 
       std::ifstream fileStream(filePath);
       std::stringstream buffer;
@@ -94,18 +94,9 @@ namespace Open3SDCM
         std::cout << "SourceApp: " << sourceApp << std::endl;
       }
     }
-    catch (const Poco::XML::XMLException& ex)
-    {
-      std::cerr << "Poco XML Exception: " << ex.displayText() << std::endl;
-    }
-    catch (const Poco::Exception& ex)
-    {
-      std::cerr << "Poco Exception: " << ex.displayText() << std::endl;
-    }
-    catch (const std::exception& ex)
-    {
-      std::cerr << "Exception: " << ex.what() << std::endl;
-    }
+    catch (const Poco::XML::XMLException& ex) { std::cerr << "Poco XML Exception: " << ex.displayText() << std::endl; }
+    catch (const Poco::Exception& ex) { std::cerr << "Poco Exception: " << ex.displayText() << std::endl; }
+    catch (const std::exception& ex) { std::cerr << "Exception: " << ex.what() << std::endl; }
   }
 
   size_t GetElemCount(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes, const std::string& GeomType)
@@ -141,6 +132,9 @@ namespace Open3SDCM
     }
   }
 
+
+
+
   size_t GetBufferSize(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes, const std::string& GeomType)
   {
     try
@@ -172,6 +166,57 @@ namespace Open3SDCM
       return 0;
     }
   }
+
+
+  std::vector<float> ParseVertices(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes)
+  {
+    try
+    {
+      if (!BinaryNodes.isNull() && BinaryNodes->length() > 0)
+      {
+        auto binaryElement = dynamic_cast<Poco::XML::Element*>(BinaryNodes->item(0));
+        if (binaryElement)
+        {
+          // Get the CA element inside Binary_data
+
+          Poco::AutoPtr<Poco::XML::NodeList> caNodes = binaryElement->getElementsByTagName("Vertices");
+          if (caNodes->length() > 0)
+          {
+            auto caElement = dynamic_cast<Poco::XML::Element*>(caNodes->item(0));
+            std::string base64Text = caElement->innerText();
+            // remove blankspace and empty lines
+            base64Text.erase(std::remove_if(base64Text.begin(), base64Text.end(), [](char c) { return c == ' ' || c == '\n' || c == '\r'; }), base64Text.end());
+            std::istringstream inStream(base64Text);
+            std::ostringstream outStream;
+            Poco::Base64Decoder decoder(inStream);
+            std::vector<char> rawData;
+            char chunk[4096];
+            while (decoder.read(chunk, sizeof(chunk))) {
+              rawData.insert(rawData.end(), chunk, chunk + decoder.gcount());
+            }
+            if (decoder.gcount() > 0) {
+              rawData.insert(rawData.end(), chunk, chunk + decoder.gcount());
+            }
+
+            // Reinterpret the raw bytes as floats
+            const float* floatPtr = reinterpret_cast<const float*>(rawData.data());
+            std::size_t floatCount = rawData.size() / sizeof(float);
+            std::vector<float> floatData(floatPtr, floatPtr + floatCount);
+
+            return floatData;
+
+          }
+        }
+      }
+      return {};
+    }
+    catch (const Poco::Exception& ex)
+    {
+
+      return {};;
+    }
+  }
+
   void DCMParser::ParseBinaryData(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes)
   {
     try
@@ -180,51 +225,17 @@ namespace Open3SDCM
       auto NbFaces = GetElemCount(BinaryNodes, "Facets");
       fmt::print("Expected to get {} vertices\n", NbVertices);
       fmt::print("Expected to get {} faces\n", NbFaces);
-      if (!BinaryNodes.isNull() && BinaryNodes->length() > 0)
+
+      //Parse vertices
+      m_Vertices=ParseVertices(BinaryNodes);
+      fmt::print("Expected to get {} floats ({} vertices)\n", m_Vertices.size(), m_Vertices.size() / 3);
+      if (m_Vertices.size() != NbVertices * 3)
       {
-        const auto* binaryElem = dynamic_cast<Poco::XML::Element*>(BinaryNodes->item(0));
-        if (binaryElem)
-        {
-          // Decode base64 text
-          std::string base64Text = binaryElem->innerText();
-          std::istringstream inStream(base64Text);
-          std::ostringstream outStream;
-          Poco::Base64Decoder decoder(inStream);
-          outStream << decoder.rdbuf();
-          std::string decodedData = outStream.str();
-          std::vector<unsigned int> facets;
-          const auto* dataPtr = reinterpret_cast<const std::uint8_t*>(decodedData.data());
-          size_t dataSize = decodedData.size();
-
-          // Dummy example of parsing:
-          // Assuming we read counts from the start:
-          if (dataSize >= 8)
-          {
-            // std::uint32_t vertexCount = *(reinterpret_cast<const std::uint32_t*>(dataPtr));
-            std::uint32_t facetCount = *(reinterpret_cast<const std::uint32_t*>(dataPtr + 4));
-
-            // Move pointer to actual vertex data
-            size_t offset = 8;
-            m_Vertices.reserve(NbVertices * 3);// x,y,z for each vertex
-            for (std::uint32_t i = 0; i < NbVertices * 3 && offset + sizeof(float) <= dataSize; ++i)
-            {
-              float val = *(reinterpret_cast<const float*>(dataPtr + offset));
-              m_Vertices.push_back(val);
-              offset += sizeof(float);
-            }
-
-            // // Parse facets
-            // facets.reserve(facetCount * 3);
-            // for (std::uint32_t i = 0; i < facetCount * 3 && offset + sizeof(std::uint32_t) <= dataSize; ++i)
-            // {
-            //   std::uint32_t idx = *(reinterpret_cast<const std::uint32_t*>(dataPtr + offset));
-            //   facets.push_back(idx);
-            //   offset += sizeof(std::uint32_t);
-            // }
-          }
-
-          // Store or use vertices & facets as needed
-        }
+        fmt::print("Error: Expected to get {} vertices but got {}\n", NbVertices, m_Vertices.size() / 3);
+      }
+      else
+      {
+        fmt::print("Get Correct number of vertices\n");
       }
     }
     catch (const Poco::Exception& ex)

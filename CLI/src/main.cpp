@@ -133,7 +133,6 @@ int main(int argc, const char** argv)
   {
     OutputDir = vm["output_dir"].as<std::filesystem::path>();
 
-    auto now = std::chrono::system_clock::now();
     auto timestamp = std::format("{:%Y-%m-%d-%H-%M-%S}", std::chrono::system_clock::now());
     OutputDir /= timestamp;
 
