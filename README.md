@@ -55,6 +55,11 @@ Thus vertices coordinates and triangles are encoded in base64.
 
 ```
 
+Vertices are in float format (4 bytes per coordinates) thus 12 bytes per vertex.
+
+
+
+
 # Useful links
 
 * https://dcm2stl.appspot.com/ : A web service that can convert DCM to STL

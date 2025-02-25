@@ -16,6 +16,8 @@ namespace Open3SDCM
   {
   public:
     void ParseDCM(const fs::path& filePath);
+
+    std::vector<float> m_Vertices; //Buffer of vertices (x,y,z) contigous size/3 to get Nb of Vertices
   private:
     void ParseBinaryData(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes);
 

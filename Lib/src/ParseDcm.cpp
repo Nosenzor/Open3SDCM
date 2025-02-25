@@ -108,7 +108,7 @@ namespace Open3SDCM
     }
   }
 
-  size_t GetVertexCount(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes)
+  size_t GetElemCount(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes, const std::string& GeomType)
   {
     try
     {
@@ -118,15 +118,17 @@ namespace Open3SDCM
         if (binaryElement)
         {
           // Get the CA element inside Binary_data
-          Poco::AutoPtr<Poco::XML::NodeList> caNodes = binaryElement->getElementsByTagName("Vertices");
+
+          Poco::AutoPtr<Poco::XML::NodeList> caNodes = binaryElement->getElementsByTagName(GeomType);
           if (caNodes->length() > 0)
           {
             auto caElement = dynamic_cast<Poco::XML::Element*>(caNodes->item(0));
-            std::string vertexCount = caElement->getAttribute("vertex_count");
-            size_t VerticesCount;
-            std::from_chars(vertexCount.data(),vertexCount.data() + vertexCount.size(), VerticesCount);
-            return VerticesCount;
-            //return std::stoul(vertexCount);
+
+            std::string AttrName = GeomType == "Vertices" ? "vertex_count" : "facet_count";
+            std::string StrCount = caElement->getAttribute(AttrName);
+            size_t Count;
+            std::from_chars(StrCount.data(), StrCount.data() + StrCount.size(), Count);
+            return Count;
           }
         }
       }
@@ -138,66 +140,97 @@ namespace Open3SDCM
       return 0;
     }
   }
-void DCMParser::ParseBinaryData(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes)
-{
+
+  size_t GetBufferSize(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes, const std::string& GeomType)
+  {
     try
     {
-        fmt::print("Expected to get {} vertices", GetVertexCount(BinaryNodes));
-        if (!BinaryNodes.isNull() && BinaryNodes->length() > 0)
+      if (!BinaryNodes.isNull() && BinaryNodes->length() > 0)
+      {
+        auto binaryElement = dynamic_cast<Poco::XML::Element*>(BinaryNodes->item(0));
+        if (binaryElement)
         {
-            const auto * binaryElem = dynamic_cast<Poco::XML::Element*>(BinaryNodes->item(0));
-            if (binaryElem)
-            {
-                // Decode base64 text
-                std::string base64Text = binaryElem->innerText();
-                std::istringstream inStream(base64Text);
-                std::ostringstream outStream;
-                Poco::Base64Decoder decoder(inStream);
-                outStream << decoder.rdbuf();
-                std::string decodedData = outStream.str();
+          // Get the CA element inside Binary_data
 
-                // Parse binary data for vertices & facets
-                // Example: read the first 4 bytes as vertex count, next 4 bytes as facet count, etc.
-                std::vector<float> vertices;
-                std::vector<unsigned int> facets;
-                const auto* dataPtr = reinterpret_cast<const std::uint8_t*>(decodedData.data());
-                size_t dataSize = decodedData.size();
+          Poco::AutoPtr<Poco::XML::NodeList> caNodes = binaryElement->getElementsByTagName(GeomType);
+          if (caNodes->length() > 0)
+          {
+            auto caElement = dynamic_cast<Poco::XML::Element*>(caNodes->item(0));
 
-                // Dummy example of parsing:
-                // Assuming we read counts from the start:
-                if (dataSize >= 8)
-                {
-                    std::uint32_t vertexCount = *(reinterpret_cast<const std::uint32_t*>(dataPtr));
-                    std::uint32_t facetCount = *(reinterpret_cast<const std::uint32_t*>(dataPtr + 4));
-
-                    // Move pointer to actual vertex data
-                    size_t offset = 8;
-                    vertices.reserve(vertexCount * 3); // x,y,z for each vertex
-                    for (std::uint32_t i = 0; i < vertexCount * 3 && offset + sizeof(float) <= dataSize; ++i)
-                    {
-                        float val = *(reinterpret_cast<const float*>(dataPtr + offset));
-                        vertices.push_back(val);
-                        offset += sizeof(float);
-                    }
-
-                    // Parse facets
-                    facets.reserve(facetCount * 3);
-                    for (std::uint32_t i = 0; i < facetCount * 3 && offset + sizeof(std::uint32_t) <= dataSize; ++i)
-                    {
-                        std::uint32_t idx = *(reinterpret_cast<const std::uint32_t*>(dataPtr + offset));
-                        facets.push_back(idx);
-                        offset += sizeof(std::uint32_t);
-                    }
-                }
-
-                // Store or use vertices & facets as needed
-            }
+            std::string StrBuffersize = caElement->getAttribute("base64_encoded_bytes");
+            size_t Count;
+            std::from_chars(StrBuffersize.data(), StrBuffersize.data() + StrBuffersize.size(), Count);
+            return Count;
+          }
         }
+      }
+      return 0;
     }
-    catch (const Poco::Exception & ex)
+    catch (const Poco::Exception& ex)
     {
-        // Handle errors
+      std::cerr << "Error getting vertex count: " << ex.displayText() << std::endl;
+      return 0;
     }
-}
+  }
+  void DCMParser::ParseBinaryData(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes)
+  {
+    try
+    {
+      auto NbVertices = GetElemCount(BinaryNodes, "Vertices");
+      auto NbFaces = GetElemCount(BinaryNodes, "Facets");
+      fmt::print("Expected to get {} vertices\n", NbVertices);
+      fmt::print("Expected to get {} faces\n", NbFaces);
+      if (!BinaryNodes.isNull() && BinaryNodes->length() > 0)
+      {
+        const auto* binaryElem = dynamic_cast<Poco::XML::Element*>(BinaryNodes->item(0));
+        if (binaryElem)
+        {
+          // Decode base64 text
+          std::string base64Text = binaryElem->innerText();
+          std::istringstream inStream(base64Text);
+          std::ostringstream outStream;
+          Poco::Base64Decoder decoder(inStream);
+          outStream << decoder.rdbuf();
+          std::string decodedData = outStream.str();
+          std::vector<unsigned int> facets;
+          const auto* dataPtr = reinterpret_cast<const std::uint8_t*>(decodedData.data());
+          size_t dataSize = decodedData.size();
+
+          // Dummy example of parsing:
+          // Assuming we read counts from the start:
+          if (dataSize >= 8)
+          {
+            // std::uint32_t vertexCount = *(reinterpret_cast<const std::uint32_t*>(dataPtr));
+            std::uint32_t facetCount = *(reinterpret_cast<const std::uint32_t*>(dataPtr + 4));
+
+            // Move pointer to actual vertex data
+            size_t offset = 8;
+            m_Vertices.reserve(NbVertices * 3);// x,y,z for each vertex
+            for (std::uint32_t i = 0; i < NbVertices * 3 && offset + sizeof(float) <= dataSize; ++i)
+            {
+              float val = *(reinterpret_cast<const float*>(dataPtr + offset));
+              m_Vertices.push_back(val);
+              offset += sizeof(float);
+            }
+
+            // // Parse facets
+            // facets.reserve(facetCount * 3);
+            // for (std::uint32_t i = 0; i < facetCount * 3 && offset + sizeof(std::uint32_t) <= dataSize; ++i)
+            // {
+            //   std::uint32_t idx = *(reinterpret_cast<const std::uint32_t*>(dataPtr + offset));
+            //   facets.push_back(idx);
+            //   offset += sizeof(std::uint32_t);
+            // }
+          }
+
+          // Store or use vertices & facets as needed
+        }
+      }
+    }
+    catch (const Poco::Exception& ex)
+    {
+      // Handle errors
+    }
+  }
 
 }// namespace Open3SDCM
