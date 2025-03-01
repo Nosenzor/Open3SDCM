@@ -7,6 +7,7 @@
 
 #include <Poco/DOM/AutoPtr.h>
 #include <Poco/DOM/NodeList.h>
+#include <vector>
 
 namespace fs = std::filesystem;
 
