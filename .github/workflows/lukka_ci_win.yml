@@ -49,7 +49,7 @@ jobs:
           submodules: true
 
       - name: Setup sccache action
-        uses: mozilla-actions/sccache-action@v0.0.5
+        uses: mozilla-actions/sccache-action@v0.0.7
 
       - uses: lukka/get-cmake@latest
       - name: dir
@@ -57,12 +57,14 @@ jobs:
         shell: bash
 
       - name: Restore artifacts, or setup vcpkg for building artifacts
-        uses: lukka/run-vcpkg@v11.5
+        uses: lukka/run-vcpkg@v11
         id: runvcpkg
         with:
           # This one is not needed, as it is the default value anyway.
           vcpkgDirectory: '${{ github.workspace }}/vcpkg'
           vcpkgJsonGlob: '**/vcpkg.json'
+        env:
+          SCCACHE_GHA_ENABLED: "true"
 
       - name: List $RUNNER_WORKSPACE before build
         run: find $RUNNER_WORKSPACE
