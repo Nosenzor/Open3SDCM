@@ -1,13 +1,14 @@
 {
   "name": "open3sdcm",
   "version-string": "0.1.0",
+  "builtin-baseline": "efb1e7436979a30c4d3e5ab2375fd8e2e461d541",
   "description": "Toolbox for converting 3Shape DCM files into open 3d format",
   "dependencies": [
     "boost-test",
-	"boost-program-options",
-	"fmt",
-	"poco",
-	"spdlog",
-	"assimp"
-	  ]
+    "boost-program-options",
+    "fmt",
+    "poco",
+    "spdlog",
+    "assimp"
+  ]
 }
