@@ -6,6 +6,7 @@
   "dependencies": [
     "boost-test",
     "boost-program-options",
+    "boost-dynamic-bitset",
     "fmt",
     "poco",
     "spdlog",
