@@ -16,6 +16,7 @@ find_package(Poco CONFIG REQUIRED COMPONENTS XML JSON Zip)
 set(SOURCES
         src/ParseDcm.h
         src/ParseDcm.cpp
+        src/definitions.h
 )
 
 

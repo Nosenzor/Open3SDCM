@@ -151,6 +151,12 @@ int main(int argc, const char** argv)
   {
     Open3SDCM::DCMParser Parser;
     Parser.ParseDCM(inputFile);
+
+    // print the first 10 vertices
+    for (size_t i = 0; i < 10; ++i)
+    {
+      fmt::print("Vertex {} : x={} y={} z={}\n", i, Parser.m_Vertices[i * 3], Parser.m_Vertices[i * 3 + 1], Parser.m_Vertices[i * 3 + 2]);
+    }
   }
 
   return 0;

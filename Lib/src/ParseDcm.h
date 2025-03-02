@@ -13,6 +13,7 @@ namespace fs = std::filesystem;
 
 namespace Open3SDCM
 {
+
   class DCMParser
   {
   public:

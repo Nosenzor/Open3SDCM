@@ -3,12 +3,14 @@
 //
 
 #include "ParseDcm.h"
+#include "definitions.h"
+
 #include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
-
+#include <array>
 #include "Poco/Base64Decoder.h"
 #include <Poco/DOM/AutoPtr.h>
 #include <Poco/DOM/DOMParser.h>
@@ -22,20 +24,21 @@
 #include <Poco/XML/XMLException.h>
 
 #include <fmt/ostream.h>
+
+
+
 namespace fs = std::filesystem;
 
 namespace Open3SDCM
 {
 
-  struct Vertex
-  {
+  struct Vertex {
     float x;
     float y;
     float z;
   };
 
-  struct Facet
-  {
+  struct Facet {
     Vertex normal;
     Vertex v1;
     Vertex v2;
@@ -94,9 +97,18 @@ namespace Open3SDCM
         std::cout << "SourceApp: " << sourceApp << std::endl;
       }
     }
-    catch (const Poco::XML::XMLException& ex) { std::cerr << "Poco XML Exception: " << ex.displayText() << std::endl; }
-    catch (const Poco::Exception& ex) { std::cerr << "Poco Exception: " << ex.displayText() << std::endl; }
-    catch (const std::exception& ex) { std::cerr << "Exception: " << ex.what() << std::endl; }
+    catch (const Poco::XML::XMLException& ex)
+    {
+      std::cerr << "Poco XML Exception: " << ex.displayText() << std::endl;
+    }
+    catch (const Poco::Exception& ex)
+    {
+      std::cerr << "Poco Exception: " << ex.displayText() << std::endl;
+    }
+    catch (const std::exception& ex)
+    {
+      std::cerr << "Exception: " << ex.what() << std::endl;
+    }
   }
 
   size_t GetElemCount(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes, const std::string& GeomType)
@@ -132,9 +144,6 @@ namespace Open3SDCM
     }
   }
 
-
-
-
   size_t GetBufferSize(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes, const std::string& GeomType)
   {
     try
@@ -167,6 +176,26 @@ namespace Open3SDCM
     }
   }
 
+  std::vector<char> DecodeBuffer(std::string & base64Text, size_t EstimatedBufferSize)
+  {
+    // remove blankspace and empty lines
+    std::erase_if(base64Text, [](char c) { return c == ' ' || c == '\n' || c == '\r'; });
+    std::istringstream inStream(base64Text);
+    std::ostringstream outStream;
+    Poco::Base64Decoder decoder(inStream);
+    std::vector<char> rawData;
+    rawData.reserve(EstimatedBufferSize);
+    std::array<char, 4096U> chunk;
+    while (decoder.read(chunk.data(), sizeof(chunk)))
+    {
+      rawData.insert(rawData.end(), chunk.begin(), chunk.begin() + decoder.gcount());
+    }
+    if (decoder.gcount() > 0)
+    {
+      rawData.insert(rawData.end(), chunk.begin(), chunk.begin() + decoder.gcount());
+    }
+    return rawData;
+  }
 
   std::vector<float> ParseVertices(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes)
   {
@@ -182,28 +211,59 @@ namespace Open3SDCM
           Poco::AutoPtr<Poco::XML::NodeList> caNodes = binaryElement->getElementsByTagName("Vertices");
           if (caNodes->length() > 0)
           {
+
             auto caElement = dynamic_cast<Poco::XML::Element*>(caNodes->item(0));
             std::string base64Text = caElement->innerText();
-            // remove blankspace and empty lines
-            base64Text.erase(std::remove_if(base64Text.begin(), base64Text.end(), [](char c) { return c == ' ' || c == '\n' || c == '\r'; }), base64Text.end());
-            std::istringstream inStream(base64Text);
-            std::ostringstream outStream;
-            Poco::Base64Decoder decoder(inStream);
-            std::vector<char> rawData;
-            char chunk[4096];
-            while (decoder.read(chunk, sizeof(chunk))) {
-              rawData.insert(rawData.end(), chunk, chunk + decoder.gcount());
-            }
-            if (decoder.gcount() > 0) {
-              rawData.insert(rawData.end(), chunk, chunk + decoder.gcount());
-            }
 
+            auto BufferSize= GetBufferSize(BinaryNodes, "Vertices");
+            auto rawData=DecodeBuffer(base64Text, BufferSize);
             // Reinterpret the raw bytes as floats
-            const float* floatPtr = reinterpret_cast<const float*>(rawData.data());
+            auto floatPtr = reinterpret_cast<const float*>(rawData.data());
             std::size_t floatCount = rawData.size() / sizeof(float);
             std::vector<float> floatData(floatPtr, floatPtr + floatCount);
 
             return floatData;
+          }
+        }
+      }
+      return {};
+    }
+    catch (const Poco::Exception& ex)
+    {
+
+      return {};
+    }
+  }
+
+
+  std::vector<Open3SDCM::Triangle> InterpretFacetsBuffer(const std::vector<char> & rawData)
+  {
+
+    std::vector<Open3SDCM::Triangle> Triangles;
+
+    return Triangles;
+  }
+
+ std::vector<Open3SDCM::Triangle>  ParseFacets(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes)
+  {
+    try
+    {
+      if (!BinaryNodes.isNull() && BinaryNodes->length() > 0)
+      {
+        auto binaryElement = dynamic_cast<Poco::XML::Element*>(BinaryNodes->item(0));
+        if (binaryElement)
+        {
+          // Get the CA element inside Binary_data
+
+          Poco::AutoPtr<Poco::XML::NodeList> caNodes = binaryElement->getElementsByTagName("Facets");
+          if (caNodes->length() > 0)
+          {
+            auto caElement = dynamic_cast<Poco::XML::Element*>(caNodes->item(0));
+            std::string base64Text = caElement->innerText();
+            auto BufferSize= GetBufferSize(BinaryNodes, "Facets");
+            auto rawData=DecodeBuffer(base64Text, BufferSize);
+
+            return InterpretFacetsBuffer(rawData);
 
           }
         }
@@ -213,7 +273,7 @@ namespace Open3SDCM
     catch (const Poco::Exception& ex)
     {
 
-      return {};;
+      return {};
     }
   }
 
@@ -227,7 +287,7 @@ namespace Open3SDCM
       fmt::print("Expected to get {} faces\n", NbFaces);
 
       //Parse vertices
-      m_Vertices=ParseVertices(BinaryNodes);
+      m_Vertices = ParseVertices(BinaryNodes);
       fmt::print(" {} floats ({} vertices) have been read from buffer\n", m_Vertices.size(), m_Vertices.size() / 3);
       if (m_Vertices.size() != NbVertices * 3)
       {
@@ -237,6 +297,7 @@ namespace Open3SDCM
       {
         fmt::print("Get Correct number of vertices\n");
       }
+      ParseFacets(BinaryNodes);
     }
     catch (const Poco::Exception& ex)
     {
