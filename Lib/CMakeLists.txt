@@ -13,6 +13,7 @@ endif ()
 #find_package(Boost REQUIRED)
 find_package(Poco CONFIG REQUIRED COMPONENTS XML JSON Zip)
 find_package(boost_dynamic_bitset CONFIG REQUIRED)
+find_package(assimp CONFIG REQUIRED)
 set(SOURCES
         src/ParseDcm.h
         src/ParseDcm.cpp
@@ -33,7 +34,7 @@ set_property(TARGET ${PROJECT_NAME} PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 
 target_link_system_libraries(${PROJECT_NAME} PRIVATE
-    ${Boost_LIBRARIES} Boost::dynamic_bitset Poco::Zip Poco::XML
+    ${Boost_LIBRARIES} Boost::dynamic_bitset Poco::Zip Poco::XML assimp::assimp
 )
 
 if(MSVC)
