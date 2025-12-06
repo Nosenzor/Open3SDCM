@@ -152,10 +152,23 @@ int main(int argc, const char** argv)
     Open3SDCM::DCMParser Parser;
     Parser.ParseDCM(inputFile);
 
-    // print the first 10 vertices
-    for (size_t i = 0; i < 10; ++i)
+    fmt::print("Parsed {} vertices and {} triangles from {}\n",
+               Parser.m_Vertices.size() / 3,
+               Parser.m_Triangles.size(),
+               inputFile.filename().string());
+
+    // Generate output filename
+    std::string outputFilename = inputFile.stem().string() + "." + OutputFormat;
+    std::filesystem::path outputFilePath = OutputDir / outputFilename;
+
+    // Export mesh
+    if (Parser.ExportMesh(outputFilePath, OutputFormat))
     {
-      fmt::print("Vertex {} : x={} y={} z={}\n", i, Parser.m_Vertices[i * 3], Parser.m_Vertices[i * 3 + 1], Parser.m_Vertices[i * 3 + 2]);
+      fmt::print("✓ Successfully exported to: {}\n\n", outputFilePath.string());
+    }
+    else
+    {
+      fmt::print("✗ Failed to export {}\n\n", outputFilename);
     }
   }
 
