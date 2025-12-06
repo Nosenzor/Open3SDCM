@@ -186,19 +186,41 @@ namespace Open3SDCM
       };
 
       // Helper to read int16 (note: increments by 4 bytes as per Python code)
-      auto read16 = [&rawData, &commandOffset]() -> int16_t {
+      // Returns absolute vertex index (handles negative indices as relative to vertex_offset)
+      auto read16 = [&rawData, &commandOffset, &vertexOffset]() -> size_t {
         int16_t result;
         std::memcpy(&result, &rawData[commandOffset], sizeof(int16_t));
         commandOffset += 4;  // Python code increments by 4, not 2
-        return result;
+        // Handle negative indices as relative to vertex_offset
+        if (result < 0) {
+          // Vérifier que le résultat ne sera pas négatif
+          if (static_cast<size_t>(-result) > vertexOffset) {
+            std::cerr << "Warning: read16 negative index " << result
+                      << " larger than vertex_offset " << vertexOffset << std::endl;
+            return 0;
+          }
+          return vertexOffset + result;  // result est négatif, donc soustraction
+        }
+        return static_cast<size_t>(result);
       };
 
       // Helper to read int32
-      auto read32 = [&rawData, &commandOffset]() -> int32_t {
+      // Returns absolute vertex index (handles negative indices as relative to vertex_offset)
+      auto read32 = [&rawData, &commandOffset, &vertexOffset]() -> size_t {
         int32_t result;
         std::memcpy(&result, &rawData[commandOffset], sizeof(int32_t));
         commandOffset += sizeof(int32_t);
-        return result;
+        // Handle negative indices as relative to vertex_offset
+        if (result < 0) {
+          // Vérifier que le résultat ne sera pas négatif
+          if (static_cast<size_t>(-result) > vertexOffset) {
+            std::cerr << "Warning: read32 negative index " << result
+                      << " larger than vertex_offset " << vertexOffset << std::endl;
+            return 0;
+          }
+          return vertexOffset + result;  // result est négatif, donc soustraction
+        }
+        return static_cast<size_t>(result);
       };
 
       // Helper for restart operation
@@ -457,6 +479,27 @@ namespace Open3SDCM
       return false;
     }
 
+    // Validate triangle indices
+    const size_t numVertices = m_Vertices.size() / 3;
+    size_t invalidTriangles = 0;
+    for (size_t i = 0; i < m_Triangles.size(); ++i)
+    {
+      if (m_Triangles[i].v1 >= numVertices ||
+          m_Triangles[i].v2 >= numVertices ||
+          m_Triangles[i].v3 >= numVertices)
+      {
+        fmt::print("Warning: Triangle {} has invalid indices: ({}, {}, {}), max vertex index: {}\n",
+                   i, m_Triangles[i].v1, m_Triangles[i].v2, m_Triangles[i].v3, numVertices - 1);
+        invalidTriangles++;
+      }
+    }
+
+    if (invalidTriangles > 0)
+    {
+      fmt::print("Error: Found {} triangles with invalid indices. Cannot export.\n", invalidTriangles);
+      return false;
+    }
+
     // Create Assimp scene
     aiScene* scene = new aiScene();
     scene->mRootNode = new aiNode();
@@ -471,7 +514,7 @@ namespace Open3SDCM
     scene->mRootNode->mMeshes[0] = 0;
 
     // Set vertices
-    mesh->mNumVertices = m_Vertices.size() / 3;
+    mesh->mNumVertices = numVertices;
     mesh->mVertices = new aiVector3D[mesh->mNumVertices];
     for (size_t i = 0; i < mesh->mNumVertices; ++i)
     {
@@ -506,10 +549,9 @@ namespace Open3SDCM
     else if (format == "ply") formatId = "ply";
     else if (format == "stlb") formatId = "stlb";  // STL binary
 
-    // Export using Assimp
+    // Export using Assimp without JoinIdenticalVertices to avoid crashes
     Assimp::Exporter exporter;
-    aiReturn result = exporter.Export(scene, formatId, outputPath.string(),
-                                      aiProcess_Triangulate | aiProcess_JoinIdenticalVertices);
+    aiReturn result = exporter.Export(scene, formatId, outputPath.string(), 0);
 
     // Clean up
     delete scene;
