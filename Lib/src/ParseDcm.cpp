@@ -248,7 +248,7 @@ namespace Open3SDCM
             auto next = edgeQueue.front();
             edgeQueue.pop_front();
             appendFace(current.first, next.second, current.second);
-            edgeQueue.push_front({current.first, next.second});
+            edgeQueue.push_back({current.first, next.second});
             break;
           }
           case 3: { // op3 - rotate
