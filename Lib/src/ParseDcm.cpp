@@ -25,6 +25,10 @@
 #include <Poco/Path.h>
 #include <Poco/XML/XMLException.h>
 
+#include <assimp/Exporter.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
+
 #include <fmt/ostream.h>
 
 namespace fs = std::filesystem;
@@ -158,13 +162,147 @@ namespace Open3SDCM
       }
     }
 
-    std::vector<Open3SDCM::Triangle> InterpretFacetsBuffer(const std::vector<char>& rawData)
+    std::vector<Open3SDCM::Triangle> InterpretFacetsBuffer(const std::vector<char>& rawData, size_t expectedFaceCount)
     {
-
-      //convert rawdata to bitset to ease interpretation
-      boost::dynamic_bitset<> bitset(rawData.begin(), rawData.end());
+      constexpr uint8_t FACET_COMMAND_MASK = 0x0F;
 
       std::vector<Open3SDCM::Triangle> Triangles;
+      Triangles.reserve(expectedFaceCount);
+
+      std::deque<std::pair<size_t, size_t>> edgeQueue;
+      size_t commandOffset = 0;
+      size_t vertexOffset = 0;
+
+      // Helper lambda to append a face
+      auto appendFace = [&Triangles](size_t v1, size_t v2, size_t v3) {
+        Triangles.push_back({v1, v2, v3});
+      };
+
+      // Helper to read command
+      auto readOp = [&rawData, &commandOffset]() -> uint8_t {
+        uint8_t result = static_cast<uint8_t>(rawData[commandOffset]) & FACET_COMMAND_MASK;
+        commandOffset++;
+        return result;
+      };
+
+      // Helper to read int16 (note: increments by 4 bytes as per Python code)
+      auto read16 = [&rawData, &commandOffset]() -> int16_t {
+        int16_t result;
+        std::memcpy(&result, &rawData[commandOffset], sizeof(int16_t));
+        commandOffset += 4;  // Python code increments by 4, not 2
+        return result;
+      };
+
+      // Helper to read int32
+      auto read32 = [&rawData, &commandOffset]() -> int32_t {
+        int32_t result;
+        std::memcpy(&result, &rawData[commandOffset], sizeof(int32_t));
+        commandOffset += sizeof(int32_t);
+        return result;
+      };
+
+      // Helper for restart operation
+      auto restart = [&](size_t vid0, size_t vid1, size_t vid2) {
+        edgeQueue.clear();
+        appendFace(vid0, vid1, vid2);
+        edgeQueue.push_back({vid0, vid1});
+        edgeQueue.push_back({vid1, vid2});
+        edgeQueue.push_back({vid2, vid1});
+      };
+
+      // Helper for absolute operation
+      auto absolute = [&](size_t index) {
+        auto current = edgeQueue.front();
+        edgeQueue.pop_front();
+        appendFace(current.first, index, current.second);
+        edgeQueue.push_back({current.first, index});
+        edgeQueue.push_back({index, current.second});
+      };
+
+      // Process all commands
+      while (commandOffset < rawData.size()) {
+        uint8_t command = readOp();
+
+        switch (command) {
+          case 0: { // op0
+            auto current = edgeQueue.front();
+            edgeQueue.pop_front();
+            appendFace(current.first, vertexOffset, current.second);
+            edgeQueue.push_back({current.first, vertexOffset});
+            edgeQueue.push_back({vertexOffset, current.second});
+            vertexOffset++;
+            break;
+          }
+          case 1: { // op1
+            auto current = edgeQueue.front();
+            edgeQueue.pop_front();
+            auto previous = edgeQueue.back();
+            edgeQueue.pop_back();
+            appendFace(current.first, previous.first, current.second);
+            edgeQueue.push_back({previous.first, current.second});
+            break;
+          }
+          case 2: { // op2
+            auto current = edgeQueue.front();
+            edgeQueue.pop_front();
+            auto next = edgeQueue.front();
+            edgeQueue.pop_front();
+            appendFace(current.first, next.second, current.second);
+            edgeQueue.push_front({current.first, next.second});
+            break;
+          }
+          case 3: { // op3 - rotate
+            auto front = edgeQueue.front();
+            edgeQueue.pop_front();
+            edgeQueue.push_back(front);
+            break;
+          }
+          case 4: { // op4
+            restart(vertexOffset, vertexOffset + 1, vertexOffset + 2);
+            vertexOffset += 3;
+            break;
+          }
+          case 5: { // op5
+            restart(read16(), read16(), read16());
+            break;
+          }
+          case 6: { // op6
+            restart(read32(), read32(), read32());
+            break;
+          }
+          case 7: { // op7
+            absolute(read16());
+            break;
+          }
+          case 8: { // op8
+            absolute(read32());
+            break;
+          }
+          case 9: { // op9
+            auto current = edgeQueue.front();
+            edgeQueue.pop_front();
+            if (edgeQueue.size() > 1) {
+              if (edgeQueue.back().first == edgeQueue.front().first) {
+                edgeQueue.pop_back();
+              } else if (edgeQueue.back().second == current.first &&
+                         edgeQueue.back().first == current.second) {
+                edgeQueue.pop_back();
+              } else {
+                edgeQueue.back().second = edgeQueue.front().second;
+              }
+            }
+            break;
+          }
+          case 10: { // op10
+            vertexOffset++;
+            break;
+          }
+          default: {
+            std::cerr << "Warning: Invalid command detected: " << static_cast<int>(command) << std::endl;
+            break;
+          }
+        }
+      }
 
       return Triangles;
     }
@@ -186,9 +324,10 @@ namespace Open3SDCM
               auto caElement = dynamic_cast<Poco::XML::Element*>(caNodes->item(0));
               std::string base64Text = caElement->innerText();
               auto BufferSize = GetBufferSize(BinaryNodes, "Facets");
+              auto FaceCount = GetElemCount(BinaryNodes, "Facets");
               auto rawData = DecodeBuffer(base64Text, BufferSize);
 
-              return InterpretFacetsBuffer(rawData);
+              return InterpretFacetsBuffer(rawData, FaceCount);
             }
           }
         }
@@ -291,12 +430,98 @@ namespace Open3SDCM
       {
         fmt::print("Get Correct number of vertices\n");
       }
-      detail::ParseFacets(BinaryNodes);
+
+      //Parse facets
+      m_Triangles = detail::ParseFacets(BinaryNodes);
+      fmt::print(" {} triangles have been read from buffer\n", m_Triangles.size());
+      if (m_Triangles.size() != NbFaces)
+      {
+        fmt::print("Error: Expected to get {} faces but got {}\n", NbFaces, m_Triangles.size());
+      }
+      else
+      {
+        fmt::print("Get Correct number of faces\n");
+      }
     }
     catch (const Poco::Exception& ex)
     {
       // Handle errors
     }
+  }
+
+  bool DCMParser::ExportMesh(const fs::path& outputPath, const std::string& format) const
+  {
+    if (m_Vertices.empty() || m_Triangles.empty())
+    {
+      fmt::print("Error: No mesh data to export\n");
+      return false;
+    }
+
+    // Create Assimp scene
+    aiScene* scene = new aiScene();
+    scene->mRootNode = new aiNode();
+
+    // Create mesh
+    scene->mNumMeshes = 1;
+    scene->mMeshes = new aiMesh*[1];
+    aiMesh* mesh = new aiMesh();
+    scene->mMeshes[0] = mesh;
+    scene->mRootNode->mNumMeshes = 1;
+    scene->mRootNode->mMeshes = new unsigned int[1];
+    scene->mRootNode->mMeshes[0] = 0;
+
+    // Set vertices
+    mesh->mNumVertices = m_Vertices.size() / 3;
+    mesh->mVertices = new aiVector3D[mesh->mNumVertices];
+    for (size_t i = 0; i < mesh->mNumVertices; ++i)
+    {
+      mesh->mVertices[i].x = m_Vertices[i * 3 + 0];
+      mesh->mVertices[i].y = m_Vertices[i * 3 + 1];
+      mesh->mVertices[i].z = m_Vertices[i * 3 + 2];
+    }
+
+    // Set faces
+    mesh->mNumFaces = m_Triangles.size();
+    mesh->mFaces = new aiFace[mesh->mNumFaces];
+    for (size_t i = 0; i < mesh->mNumFaces; ++i)
+    {
+      aiFace& face = mesh->mFaces[i];
+      face.mNumIndices = 3;
+      face.mIndices = new unsigned int[3];
+      face.mIndices[0] = m_Triangles[i].v1;
+      face.mIndices[1] = m_Triangles[i].v2;
+      face.mIndices[2] = m_Triangles[i].v3;
+    }
+
+    // Create a default material
+    scene->mNumMaterials = 1;
+    scene->mMaterials = new aiMaterial*[1];
+    scene->mMaterials[0] = new aiMaterial();
+    mesh->mMaterialIndex = 0;
+
+    // Determine format ID for Assimp
+    std::string formatId = format;
+    if (format == "stl") formatId = "stl";
+    else if (format == "obj") formatId = "obj";
+    else if (format == "ply") formatId = "ply";
+    else if (format == "stlb") formatId = "stlb";  // STL binary
+
+    // Export using Assimp
+    Assimp::Exporter exporter;
+    aiReturn result = exporter.Export(scene, formatId, outputPath.string(),
+                                      aiProcess_Triangulate | aiProcess_JoinIdenticalVertices);
+
+    // Clean up
+    delete scene;
+
+    if (result != AI_SUCCESS)
+    {
+      fmt::print("Error: Failed to export mesh - {}\n", exporter.GetErrorString());
+      return false;
+    }
+
+    fmt::print("Successfully exported mesh to: {}\n", outputPath.string());
+    return true;
   }
 
 }// namespace Open3SDCM
