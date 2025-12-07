@@ -54,9 +54,9 @@ namespace Open3SDCM::Test
         MeshData data;
 
         Assimp::Importer importer;
+        // Load mesh without joining vertices to preserve original structure
         const aiScene* scene = importer.ReadFile(filePath.string(),
-            aiProcess_Triangulate |
-            aiProcess_JoinIdenticalVertices);
+            aiProcess_Triangulate);
 
         if (!scene || !scene->HasMeshes())
         {
