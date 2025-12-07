@@ -8,6 +8,9 @@
 #include "boost/dynamic_bitset.hpp"
 #include <algorithm>
 #include <array>
+#include <deque>
+#include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -144,9 +147,10 @@ namespace Open3SDCM
 
               auto BufferSize = GetBufferSize(BinaryNodes, "Vertices");
               auto rawData = DecodeBuffer(base64Text, BufferSize);
+              auto vertexCount = GetElemCount(BinaryNodes, "Vertices");
               // Reinterpret the raw bytes as floats
               auto floatPtr = reinterpret_cast<const float*>(rawData.data());
-              std::size_t floatCount = rawData.size() / sizeof(float);
+              std::size_t floatCount = vertexCount * 3;
               std::vector<float> floatData(floatPtr, floatPtr + floatCount);
 
               return floatData;
@@ -173,53 +177,52 @@ namespace Open3SDCM
       size_t commandOffset = 0;
       size_t vertexOffset = 0;
 
+      const auto requireBytes = [&](size_t bytes) -> bool {
+        if (commandOffset + bytes > rawData.size())
+        {
+          std::cerr << "Warning: Facet buffer underrun while reading geometry data" << std::endl;
+          return false;
+        }
+        return true;
+      };
+
       // Helper lambda to append a face
       auto appendFace = [&Triangles](size_t v1, size_t v2, size_t v3) {
         Triangles.push_back({v1, v2, v3});
       };
 
       // Helper to read command
-      auto readOp = [&rawData, &commandOffset]() -> uint8_t {
+      auto readOp = [&rawData, &commandOffset, &requireBytes]() -> uint8_t {
+        if (!requireBytes(1))
+        {
+          return 0;
+        }
         uint8_t result = static_cast<uint8_t>(rawData[commandOffset]) & FACET_COMMAND_MASK;
         commandOffset++;
         return result;
       };
 
-      // Helper to read int16 (note: increments by 4 bytes as per Python code)
-      // Returns absolute vertex index (handles negative indices as relative to vertex_offset)
-      auto read16 = [&rawData, &commandOffset, &vertexOffset]() -> size_t {
-        int16_t result;
-        std::memcpy(&result, &rawData[commandOffset], sizeof(int16_t));
-        commandOffset += 4;  // Python code increments by 4, not 2
-        // Handle negative indices as relative to vertex_offset
-        if (result < 0) {
-          // Vérifier que le résultat ne sera pas négatif
-          if (static_cast<size_t>(-result) > vertexOffset) {
-            std::cerr << "Warning: read16 negative index " << result
-                      << " larger than vertex_offset " << vertexOffset << std::endl;
-            return 0;
-          }
-          return vertexOffset + result;  // result est négatif, donc soustraction
+      // Helper to read unsigned int16 values (stored on 4-byte boundaries)
+      auto read16 = [&rawData, &commandOffset, &requireBytes]() -> size_t {
+        if (!requireBytes(sizeof(uint16_t)))
+        {
+          return 0;
         }
+        uint16_t result;
+        std::memcpy(&result, rawData.data() + commandOffset, sizeof(uint16_t));
+        commandOffset += 4;
         return static_cast<size_t>(result);
       };
 
-      // Helper to read int32
-      // Returns absolute vertex index (handles negative indices as relative to vertex_offset)
-      auto read32 = [&rawData, &commandOffset, &vertexOffset]() -> size_t {
-        int32_t result;
-        std::memcpy(&result, &rawData[commandOffset], sizeof(int32_t));
-        commandOffset += sizeof(int32_t);
-        // Handle negative indices as relative to vertex_offset
-        if (result < 0) {
-          // Vérifier que le résultat ne sera pas négatif
-          if (static_cast<size_t>(-result) > vertexOffset) {
-            std::cerr << "Warning: read32 negative index " << result
-                      << " larger than vertex_offset " << vertexOffset << std::endl;
-            return 0;
-          }
-          return vertexOffset + result;  // result est négatif, donc soustraction
+      // Helper to read unsigned int32 values
+      auto read32 = [&rawData, &commandOffset, &requireBytes]() -> size_t {
+        if (!requireBytes(sizeof(uint32_t)))
+        {
+          return 0;
         }
+        uint32_t result;
+        std::memcpy(&result, rawData.data() + commandOffset, sizeof(uint32_t));
+        commandOffset += sizeof(uint32_t);
         return static_cast<size_t>(result);
       };
 
@@ -446,7 +449,7 @@ namespace Open3SDCM
       fmt::print(" {} floats ({} vertices) have been read from buffer\n", m_Vertices.size(), m_Vertices.size() / 3);
       if (m_Vertices.size() != NbVertices * 3)
       {
-        fmt::print("Error: Expected to get {} vertices but got {}\n", NbVertices, m_Vertices.size() / 3);
+        fmt::print("Error: Expected to get {} floats but got {}\n", NbVertices * 3, m_Vertices.size());
       }
       else
       {
