@@ -4,15 +4,20 @@
 #include <assimp/postprocess.h>
 #include <fmt/core.h>
 #include <algorithm>
-#include <unordered_set>
+#include <set>
+#include <array>
 #include <cmath>
+#include <vector>
+#include <map>
 
 namespace Open3SDCM::Test
 {
     bool Vertex::operator<(const Vertex& other) const
     {
-        if (std::abs(x - other.x) > 1e-9f) return x < other.x;
-        if (std::abs(y - other.y) > 1e-9f) return y < other.y;
+        // Use exact comparison for sorting (no tolerance)
+        // This ensures consistent sorting order
+        if (x != other.x) return x < other.x;
+        if (y != other.y) return y < other.y;
         return z < other.z;
     }
 
@@ -97,6 +102,40 @@ namespace Open3SDCM::Test
         return data;
     }
 
+    // Helper structure for quantized vertex coordinates
+    struct QuantizedVertex {
+        int64_t x, y, z;
+        bool operator<(const QuantizedVertex& other) const {
+            if (x != other.x) return x < other.x;
+            if (y != other.y) return y < other.y;
+            return z < other.z;
+        }
+        bool operator==(const QuantizedVertex& other) const {
+            return x == other.x && y == other.y && z == other.z;
+        }
+    };
+
+    // Quantize a vertex using the given epsilon
+    static QuantizedVertex quantizeVertex(const Vertex& v, float epsilon) {
+        const double scale = 1.0 / epsilon;
+        return {
+            static_cast<int64_t>(std::round(v.x * scale)),
+            static_cast<int64_t>(std::round(v.y * scale)),
+            static_cast<int64_t>(std::round(v.z * scale))
+        };
+    }
+
+    // Create a canonical representation of a triangle (sorted quantized vertices)
+    static std::array<QuantizedVertex, 3> canonicalTriangle(const Vertex& v1, const Vertex& v2, const Vertex& v3, float epsilon) {
+        std::array<QuantizedVertex, 3> qvs = {
+            quantizeVertex(v1, epsilon),
+            quantizeVertex(v2, epsilon),
+            quantizeVertex(v3, epsilon)
+        };
+        std::sort(qvs.begin(), qvs.end());
+        return qvs;
+    }
+
     MeshComparator::ComparisonResult MeshComparator::compareMeshes(
         const MeshData& reference,
         const MeshData& test,
@@ -108,93 +147,80 @@ namespace Open3SDCM::Test
         result.expectedFaceCount = reference.faces.size();
         result.actualFaceCount = test.faces.size();
 
-        // Step 1: Build a mapping from reference vertices to test vertices
-        std::vector<size_t> refToTestMap(reference.vertices.size(), SIZE_MAX);
-        std::vector<bool> testVertexUsed(test.vertices.size(), false);
+        // Build sets of canonical triangles (quantized and sorted)
+        std::multiset<std::array<QuantizedVertex, 3>> refTriangles;
+        for (const auto& face : reference.faces) {
+            if (face.v1 < reference.vertices.size() &&
+                face.v2 < reference.vertices.size() &&
+                face.v3 < reference.vertices.size()) {
+                refTriangles.insert(canonicalTriangle(
+                    reference.vertices[face.v1],
+                    reference.vertices[face.v2],
+                    reference.vertices[face.v3],
+                    epsilon
+                ));
+            }
+        }
 
-        for (size_t refIdx = 0; refIdx < reference.vertices.size(); ++refIdx)
-        {
-            const Vertex& refVertex = reference.vertices[refIdx];
+        std::multiset<std::array<QuantizedVertex, 3>> testTriangles;
+        for (const auto& face : test.faces) {
+            if (face.v1 < test.vertices.size() &&
+                face.v2 < test.vertices.size() &&
+                face.v3 < test.vertices.size()) {
+                testTriangles.insert(canonicalTriangle(
+                    test.vertices[face.v1],
+                    test.vertices[face.v2],
+                    test.vertices[face.v3],
+                    epsilon
+                ));
+            }
+        }
 
-            // Find matching vertex in test mesh
-            for (size_t testIdx = 0; testIdx < test.vertices.size(); ++testIdx)
-            {
-                if (!testVertexUsed[testIdx] && refVertex.isClose(test.vertices[testIdx], epsilon))
-                {
-                    refToTestMap[refIdx] = testIdx;
-                    testVertexUsed[testIdx] = true;
-                    break;
+        result.expectedFaceCount = refTriangles.size();
+        result.actualFaceCount = testTriangles.size();
+
+        // Compare multisets
+        std::vector<std::array<QuantizedVertex, 3>> missing;
+        std::set_difference(refTriangles.begin(), refTriangles.end(),
+                            testTriangles.begin(), testTriangles.end(),
+                            std::back_inserter(missing));
+
+        std::vector<std::array<QuantizedVertex, 3>> extra;
+        std::set_difference(testTriangles.begin(), testTriangles.end(),
+                            refTriangles.begin(), refTriangles.end(),
+                            std::back_inserter(extra));
+
+        result.missingFaces = missing.size();
+        result.extraFaces = extra.size();
+        result.facesMatch = (result.missingFaces == 0 && result.extraFaces == 0);
+
+        // Vertex comparison
+        result.verticesMatch = (result.expectedVertexCount == result.actualVertexCount);
+        result.missingVertices = 0;
+        result.extraVertices = 0;
+
+        if (!result.facesMatch) {
+            fmt::print("\n--- Face Mismatch Details ---\n");
+            if (!missing.empty()) {
+                fmt::print("Missing faces in GENERATED ({}):\n", missing.size());
+                for(size_t i = 0; i < std::min(missing.size(), (size_t)5); ++i) {
+                    fmt::print("  - Quantized vertices: ({}, {}, {}), ({}, {}, {}), ({}, {}, {})\n",
+                        missing[i][0].x, missing[i][0].y, missing[i][0].z,
+                        missing[i][1].x, missing[i][1].y, missing[i][1].z,
+                        missing[i][2].x, missing[i][2].y, missing[i][2].z);
                 }
             }
-
-            if (refToTestMap[refIdx] == SIZE_MAX)
-            {
-                result.missingVertices++;
+            if (!extra.empty()) {
+                fmt::print("Extra faces in GENERATED ({}):\n", extra.size());
+                for(size_t i = 0; i < std::min(extra.size(), (size_t)5); ++i) {
+                    fmt::print("  - Quantized vertices: ({}, {}, {}), ({}, {}, {}), ({}, {}, {})\n",
+                        extra[i][0].x, extra[i][0].y, extra[i][0].z,
+                        extra[i][1].x, extra[i][1].y, extra[i][1].z,
+                        extra[i][2].x, extra[i][2].y, extra[i][2].z);
+                }
             }
+            fmt::print("---------------------------\n\n");
         }
-
-        // Count extra vertices in test mesh
-        for (bool used : testVertexUsed)
-        {
-            if (!used)
-            {
-                result.extraVertices++;
-            }
-        }
-
-        result.verticesMatch = (result.missingVertices == 0 && result.extraVertices == 0);
-
-        // Step 2: Compare faces (with permutation handling)
-        // Build a set of normalized faces from reference
-        std::set<std::array<size_t, 3>> referenceFacesSet;
-
-        for (const Face& face : reference.faces)
-        {
-            // Map reference face indices to test mesh vertex indices
-            if (refToTestMap[face.v1] != SIZE_MAX &&
-                refToTestMap[face.v2] != SIZE_MAX &&
-                refToTestMap[face.v3] != SIZE_MAX)
-            {
-                std::array<size_t, 3> vertices = {
-                    refToTestMap[face.v1],
-                    refToTestMap[face.v2],
-                    refToTestMap[face.v3]
-                };
-
-                // Sort to create canonical representation
-                std::sort(vertices.begin(), vertices.end());
-                referenceFacesSet.insert(vertices);
-            }
-        }
-
-        // Build a set of normalized faces from test
-        std::set<std::array<size_t, 3>> testFacesSet;
-
-        for (const Face& face : test.faces)
-        {
-            std::array<size_t, 3> vertices = {face.v1, face.v2, face.v3};
-            std::sort(vertices.begin(), vertices.end());
-            testFacesSet.insert(vertices);
-        }
-
-        // Compare face sets
-        for (const auto& refFace : referenceFacesSet)
-        {
-            if (testFacesSet.find(refFace) == testFacesSet.end())
-            {
-                result.missingFaces++;
-            }
-        }
-
-        for (const auto& testFace : testFacesSet)
-        {
-            if (referenceFacesSet.find(testFace) == referenceFacesSet.end())
-            {
-                result.extraFaces++;
-            }
-        }
-
-        result.facesMatch = (result.missingFaces == 0 && result.extraFaces == 0);
 
         return result;
     }
