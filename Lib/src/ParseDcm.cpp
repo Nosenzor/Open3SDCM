@@ -189,6 +189,10 @@ namespace Open3SDCM
       // Helper lambda to append a face
       auto appendFace = [&Triangles](size_t v1, size_t v2, size_t v3) {
         Triangles.push_back({v1, v2, v3});
+        // Debug: log first few faces
+        if (Triangles.size() <= 10) {
+          std::cout << "Face " << (Triangles.size() - 1) << ": (" << v1 << ", " << v2 << ", " << v3 << ")" << std::endl;
+        }
       };
 
       // Helper to read command
@@ -202,27 +206,47 @@ namespace Open3SDCM
         return result;
       };
 
-      // Helper to read unsigned int16 values (stored on 4-byte boundaries)
-      auto read16 = [&rawData, &commandOffset, &requireBytes]() -> size_t {
-        if (!requireBytes(sizeof(uint16_t)))
-        {
-          return 0;
+      // Helper to read int16 (note: uses 4-byte alignment/padding)
+      // Returns absolute vertex index (handles negative indices as relative to vertex_offset)
+      auto read16 = [&rawData, &commandOffset, &vertexOffset]() -> size_t {
+        int16_t result;
+        std::memcpy(&result, &rawData[commandOffset], sizeof(int16_t));
+        commandOffset += 4;  // 4-byte alignment (2 bytes data + 2 bytes padding)
+        // Handle negative indices as relative to vertex_offset
+        if (result < 0) {
+          // Use signed arithmetic to avoid underflow: vertexOffset - abs(result)
+          int64_t signedOffset = static_cast<int64_t>(vertexOffset);
+          int64_t signedResult = static_cast<int64_t>(result);
+          int64_t absoluteIndex = signedOffset + signedResult;  // result is negative
+          if (absoluteIndex < 0) {
+            std::cerr << "ERROR: Negative vertex index computed: offset=" << vertexOffset
+                      << ", result=" << result << ", absolute=" << absoluteIndex << std::endl;
+            return 0;
+          }
+          return static_cast<size_t>(absoluteIndex);
         }
-        uint16_t result;
-        std::memcpy(&result, rawData.data() + commandOffset, sizeof(uint16_t));
-        commandOffset += 4;
         return static_cast<size_t>(result);
       };
 
-      // Helper to read unsigned int32 values
-      auto read32 = [&rawData, &commandOffset, &requireBytes]() -> size_t {
-        if (!requireBytes(sizeof(uint32_t)))
-        {
-          return 0;
+      // Helper to read int32
+      // Returns absolute vertex index (handles negative indices as relative to vertex_offset)
+      auto read32 = [&rawData, &commandOffset, &vertexOffset]() -> size_t {
+        int32_t result;
+        std::memcpy(&result, &rawData[commandOffset], sizeof(int32_t));
+        commandOffset += sizeof(int32_t);
+        // Handle negative indices as relative to vertex_offset
+        if (result < 0) {
+          // Use signed arithmetic to avoid underflow: vertexOffset - abs(result)
+          int64_t signedOffset = static_cast<int64_t>(vertexOffset);
+          int64_t signedResult = static_cast<int64_t>(result);
+          int64_t absoluteIndex = signedOffset + signedResult;  // result is negative
+          if (absoluteIndex < 0) {
+            std::cerr << "ERROR: Negative vertex index computed: offset=" << vertexOffset
+                      << ", result=" << result << ", absolute=" << absoluteIndex << std::endl;
+            return 0;
+          }
+          return static_cast<size_t>(absoluteIndex);
         }
-        uint32_t result;
-        std::memcpy(&result, rawData.data() + commandOffset, sizeof(uint32_t));
-        commandOffset += sizeof(uint32_t);
         return static_cast<size_t>(result);
       };
 
@@ -232,7 +256,7 @@ namespace Open3SDCM
         appendFace(vid0, vid1, vid2);
         edgeQueue.push_back({vid0, vid1});
         edgeQueue.push_back({vid1, vid2});
-        edgeQueue.push_back({vid2, vid1});
+        edgeQueue.push_back({vid2, vid0});  // Fixed: was (vid2, vid1), should close the triangle with vid0
       };
 
       // Helper for absolute operation
