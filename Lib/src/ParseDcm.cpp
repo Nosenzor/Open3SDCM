@@ -420,12 +420,34 @@ namespace Open3SDCM
         std::cout << "Version: " << version << std::endl;
       }
 
-      if (Poco::AutoPtr<Poco::XML::NodeList> schemaNodes = document->getElementsByTagName("Packed_geometry");
+      if (Poco::AutoPtr<Poco::XML::NodeList> schemaNodes = document->getElementsByTagName("Schema");
           schemaNodes->length() > 0)
       {
         auto schemaElement = dynamic_cast<Poco::XML::Element*>(schemaNodes->item(0));
-        std::string schema = schemaElement->getAttribute("Schema");
+        // Get the text content of the Schema element
+        std::string schema;
+        if (schemaElement->hasChildNodes())
+        {
+          auto firstChild = schemaElement->firstChild();
+          if (firstChild)
+          {
+            schema = firstChild->nodeValue();
+          }
+        }
         std::cout << "Schema: " << schema << std::endl;
+
+        // Check if schema is supported
+        if (schema == "CE")
+        {
+          throw std::runtime_error(
+            "Schema 'CE' is not yet supported. This format uses proprietary HOOPS Stream "
+            "compression/encoding that has not been reverse-engineered yet.\n\n"
+            "To convert this file, use dcm2stlapp (the reference implementation):\n"
+            "  dcm2stlapp input.dcm output.stl\n\n"
+            "Or convert to STL/OBJ and then import the converted file.\n"
+            "Only 'CA' and 'CC' schemas are currently supported."
+          );
+        }
       }
 
       if (Poco::AutoPtr<Poco::XML::NodeList> GeometryBinaryNodes = document->getElementsByTagName("Binary_data");
