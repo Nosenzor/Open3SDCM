@@ -14,6 +14,7 @@ endif ()
 find_package(Poco CONFIG REQUIRED COMPONENTS XML JSON Zip)
 find_package(boost_dynamic_bitset CONFIG REQUIRED)
 find_package(assimp CONFIG REQUIRED)
+find_package(OpenSSL REQUIRED)
 set(SOURCES
         src/ParseDcm.h
         src/ParseDcm.cpp
@@ -34,7 +35,7 @@ set_property(TARGET ${PROJECT_NAME} PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 
 target_link_system_libraries(${PROJECT_NAME} PRIVATE
-    ${Boost_LIBRARIES} Boost::dynamic_bitset Poco::Zip Poco::XML assimp::assimp
+    ${Boost_LIBRARIES} Boost::dynamic_bitset Poco::Zip Poco::XML assimp::assimp OpenSSL::Crypto
 )
 
 if(MSVC)
@@ -47,4 +48,3 @@ if(MSVC)
       PRIVATE
       "/wd4251;")
 endif()
-

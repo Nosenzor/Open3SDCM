@@ -5,6 +5,7 @@
 #pragma once
 #include <vector>
 #include <filesystem>
+#include <map>
 
 #include <Poco/DOM/AutoPtr.h>
 #include <Poco/DOM/NodeList.h>
@@ -25,7 +26,7 @@ namespace Open3SDCM
     std::vector<float> m_Vertices; //Buffer of vertices (x,y,z) contigous size/3 to get Nb of Vertices
     std::vector<Triangle> m_Triangles; //Buffer of triangles (indices)
   private:
-    void ParseBinaryData(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes);
+    void ParseBinaryData(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes, const std::string& schema, const std::map<std::string, std::string>& properties);
 
   }; // class DCMParser
 }// namespace Open3SDCM

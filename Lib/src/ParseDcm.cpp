@@ -15,8 +15,16 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <map>
+#include <set>
+#include <iomanip>
+#include <charconv>
+
+#include <openssl/blowfish.h>
+#include <openssl/md5.h>
 
 #include "Poco/Base64Decoder.h"
+#include "Poco/Checksum.h"
 #include <Poco/DOM/AutoPtr.h>
 #include <Poco/DOM/DOMParser.h>
 #include <Poco/DOM/Document.h>
@@ -127,7 +135,114 @@ namespace Open3SDCM
       return rawData;
     }
 
-    std::vector<float> ParseVertices(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes)
+    std::string ComputePackageLockHash(const std::map<std::string, std::string>& props)
+    {
+      auto it = props.find("PackageLockList");
+      if (it == props.end()) return "";
+
+      std::string value = it->second;
+      if (value.empty()) return "";
+
+      std::set<std::string> items;
+      std::stringstream ss(value);
+      std::string item;
+      while (std::getline(ss, item, ';')) {
+        if (!item.empty()) items.insert(item);
+      }
+
+      if (items.empty()) return "";
+
+      std::string canonical;
+      for (const auto& i : items) {
+        canonical += i + ";";
+      }
+
+      unsigned char digest[MD5_DIGEST_LENGTH];
+      MD5((unsigned char*)canonical.c_str(), canonical.length(), digest);
+
+      std::stringstream hex;
+      hex << std::hex << std::uppercase;
+      for(int i = 0; i < MD5_DIGEST_LENGTH; ++i)
+        hex << std::setw(2) << std::setfill('0') << (int)digest[i];
+
+      return hex.str();
+    }
+
+    void SwapEndianness(std::vector<char>& data)
+    {
+      for (size_t i = 0; i + 8 <= data.size(); i += 8)
+      {
+           // Swap two 32-bit integers from LE to BE (or vice versa)
+           // [0 1 2 3] [4 5 6 7] -> [3 2 1 0] [7 6 5 4]
+           std::swap(data[i+0], data[i+3]);
+           std::swap(data[i+1], data[i+2]);
+
+           std::swap(data[i+4], data[i+7]);
+           std::swap(data[i+5], data[i+6]);
+      }
+    }
+
+    std::vector<char> DecryptBuffer(std::vector<char>& data, const std::string& schema, const std::map<std::string, std::string>& props)
+    {
+        if (schema != "CE") return data;
+
+        // Base key
+        std::vector<unsigned char> key = {
+            0x1C, 0x8D, 0x10, 0xB1, 0xF7, 0xF5, 0xB8, 0xFE,
+            0x89, 0x01, 0x60, 0xFB, 0xE4, 0x53, 0x60, 0xAC
+        };
+
+        // Check EKID
+        std::string ekid = "1";
+        auto it = props.find("EKID");
+        if (it != props.end()) ekid = it->second;
+
+        std::string packageHash = ComputePackageLockHash(props);
+        std::vector<unsigned char> finalKey = key;
+
+        if (ekid == "1" && !packageHash.empty()) {
+             for (char c : packageHash) {
+                 finalKey.push_back((unsigned char)c);
+             }
+        }
+
+        // Decrypt
+        BF_KEY bfKey;
+        BF_set_key(&bfKey, finalKey.size(), finalKey.data());
+
+        // Pad to 8 bytes
+        size_t originalSize = data.size();
+        size_t padding = 0;
+        if (data.size() % 8 != 0) {
+            padding = 8 - (data.size() % 8);
+            data.resize(data.size() + padding, 0);
+        }
+
+        SwapEndianness(data);
+
+        std::vector<char> decrypted(data.size());
+        for (size_t i = 0; i < data.size(); i += 8) {
+            BF_ecb_encrypt((unsigned char*)&data[i], (unsigned char*)&decrypted[i], &bfKey, BF_DECRYPT);
+        }
+
+        SwapEndianness(decrypted);
+
+        // Truncate to original size?
+        // The python code truncates to vertex_count * 12.
+        // Here we return the full decrypted buffer (potentially padded).
+        // The caller should handle truncation if needed, or we can truncate to originalSize.
+        // But originalSize might not be 8-byte aligned, so padding was added.
+        // If we truncate to originalSize, we might lose data if the original data was indeed padded?
+        // No, padding is added for encryption/decryption block size.
+        // If the original data was not a multiple of 8, it must have been padded before encryption?
+        // Or maybe the stream is just bytes.
+        // In Python: `decoded = decoded[:original_size]` where `original_size = vertex_count * 12`.
+        // So we should probably let the caller handle truncation based on vertex count.
+
+        return decrypted;
+    }
+
+    std::vector<float> ParseVertices(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes, const std::string& schema, const std::map<std::string, std::string>& props)
     {
       try
       {
@@ -147,11 +262,62 @@ namespace Open3SDCM
 
               auto BufferSize = GetBufferSize(BinaryNodes, "Vertices");
               auto rawData = DecodeBuffer(base64Text, BufferSize);
+
+              rawData = DecryptBuffer(rawData, schema, props);
+
               auto vertexCount = GetElemCount(BinaryNodes, "Vertices");
+              std::size_t expectedSize = vertexCount * 3 * sizeof(float);
+
+              // Truncate to expected size
+              if (rawData.size() > expectedSize) {
+                  rawData.resize(expectedSize);
+              }
+
+              // Verify checksum for CE schema
+              if (schema == "CE" && caElement->hasAttribute("check_value")) {
+                  std::string checkValueStr = caElement->getAttribute("check_value");
+                  uint32_t checkValue = 0;
+                  auto [ptr, ec] = std::from_chars(checkValueStr.data(), checkValueStr.data() + checkValueStr.size(), checkValue);
+
+                  if (ec == std::errc()) {
+                      Poco::Checksum checksum(Poco::Checksum::TYPE_ADLER32);
+                      checksum.update(rawData.data(), rawData.size());
+                      uint32_t adler = checksum.checksum();
+
+                      // Swap endianness to match reference implementation
+                      uint32_t swappedAdler = ((adler & 0xFF000000) >> 24) |
+                                              ((adler & 0x00FF0000) >> 8)  |
+                                              ((adler & 0x0000FF00) << 8)  |
+                                              ((adler & 0x000000FF) << 24);
+
+                      if (swappedAdler != checkValue) {
+                          fmt::print("Error: Checksum mismatch! Expected: {}, Calculated: {} (Swapped: {})\n", checkValue, adler, swappedAdler);
+                          fmt::print("Error: Decryption key might be incorrect.\n");
+                      } else {
+                          fmt::print("Checksum verified. Key is correct.\n");
+                      }
+                  }
+              }
+
               // Reinterpret the raw bytes as floats
               auto floatPtr = reinterpret_cast<const float*>(rawData.data());
               std::size_t floatCount = vertexCount * 3;
+
+              // Ensure we don't read past buffer
+              if (floatCount * sizeof(float) > rawData.size()) {
+                  std::cerr << "Error: Decrypted buffer too small for vertex count" << std::endl;
+                  return {};
+              }
+
               std::vector<float> floatData(floatPtr, floatPtr + floatCount);
+
+              // Debug: Print first few vertices
+              if (floatData.size() >= 9) {
+                  std::cout << "First 3 vertices:" << std::endl;
+                  for (int i = 0; i < 3; ++i) {
+                      std::cout << "  v" << i << ": (" << floatData[i*3] << ", " << floatData[i*3+1] << ", " << floatData[i*3+2] << ")" << std::endl;
+                  }
+              }
 
               return floatData;
             }
@@ -356,7 +522,7 @@ namespace Open3SDCM
       return Triangles;
     }
 
-    std::vector<Open3SDCM::Triangle> ParseFacets(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes)
+    std::vector<Open3SDCM::Triangle> ParseFacets(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes, const std::string& schema, const std::map<std::string, std::string>& props)
     {
       try
       {
@@ -375,6 +541,10 @@ namespace Open3SDCM
               auto BufferSize = GetBufferSize(BinaryNodes, "Facets");
               auto FaceCount = GetElemCount(BinaryNodes, "Facets");
               auto rawData = DecodeBuffer(base64Text, BufferSize);
+
+              // Facets don't seem to be encrypted in CE schema based on Python implementation
+              // But if they were, we would do:
+              // rawData = DecryptBuffer(rawData, schema, props);
 
               return InterpretFacetsBuffer(rawData, FaceCount);
             }
@@ -411,7 +581,7 @@ namespace Open3SDCM
 
       Poco::AutoPtr<Poco::XML::Document> document = parser.parseString(fileContent);
 
-      // Access elements in the XML
+      std::string schema;
       if (Poco::AutoPtr<Poco::XML::NodeList> versionNodes = document->getElementsByTagName("HPS");
           versionNodes->length() > 0)
       {
@@ -425,7 +595,6 @@ namespace Open3SDCM
       {
         auto schemaElement = dynamic_cast<Poco::XML::Element*>(schemaNodes->item(0));
         // Get the text content of the Schema element
-        std::string schema;
         if (schemaElement->hasChildNodes())
         {
           auto firstChild = schemaElement->firstChild();
@@ -435,18 +604,26 @@ namespace Open3SDCM
           }
         }
         std::cout << "Schema: " << schema << std::endl;
+      }
 
-        // Check if schema is supported
-        if (schema == "CE")
+      std::map<std::string, std::string> properties;
+      if (Poco::AutoPtr<Poco::XML::NodeList> propertyNodes = document->getElementsByTagName("Property");
+          propertyNodes->length() > 0)
+      {
+        for (unsigned long i = 0; i < propertyNodes->length(); ++i)
         {
-          throw std::runtime_error(
-            "Schema 'CE' is not yet supported. This format uses proprietary HOOPS Stream "
-            "compression/encoding that has not been reverse-engineered yet.\n\n"
-            "To convert this file, use dcm2stlapp (the reference implementation):\n"
-            "  dcm2stlapp input.dcm output.stl\n\n"
-            "Or convert to STL/OBJ and then import the converted file.\n"
-            "Only 'CA' and 'CC' schemas are currently supported."
-          );
+            auto propertyElement = dynamic_cast<Poco::XML::Element*>(propertyNodes->item(i));
+            if (propertyElement) {
+                std::string name = propertyElement->getAttribute("name");
+                std::string value = propertyElement->getAttribute("value");
+                if (!name.empty()) {
+                    properties[name] = value;
+                }
+            }
+        }
+
+        if (properties.count("SourceApp")) {
+            std::cout << "SourceApp: " << properties["SourceApp"] << std::endl;
         }
       }
 
@@ -456,15 +633,7 @@ namespace Open3SDCM
         auto GeometryBinaryElement = dynamic_cast<Poco::XML::Element*>(GeometryBinaryNodes->item(0));
         std::string GeometryBinary = GeometryBinaryElement->getAttribute("value");
         std::cout << "GeometryBinary: " << GeometryBinary << std::endl;
-        ParseBinaryData(GeometryBinaryNodes);
-      }
-
-      if (Poco::AutoPtr<Poco::XML::NodeList> propertyNodes = document->getElementsByTagName("Property");
-          propertyNodes->length() > 0)
-      {
-        auto propertyElement = dynamic_cast<Poco::XML::Element*>(propertyNodes->item(0));
-        std::string sourceApp = propertyElement->getAttribute("value");
-        std::cout << "SourceApp: " << sourceApp << std::endl;
+        ParseBinaryData(GeometryBinaryNodes, schema, properties);
       }
     }
     catch (const Poco::XML::XMLException& ex)
@@ -481,7 +650,7 @@ namespace Open3SDCM
     }
   }
 
-  void DCMParser::ParseBinaryData(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes)
+  void DCMParser::ParseBinaryData(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes, const std::string& schema, const std::map<std::string, std::string>& properties)
   {
     try
     {
@@ -491,7 +660,7 @@ namespace Open3SDCM
       fmt::print("Expected to get {} faces\n", NbFaces);
 
       //Parse vertices
-      m_Vertices = detail::ParseVertices(BinaryNodes);
+      m_Vertices = detail::ParseVertices(BinaryNodes, schema, properties);
       fmt::print(" {} floats ({} vertices) have been read from buffer\n", m_Vertices.size(), m_Vertices.size() / 3);
       if (m_Vertices.size() != NbVertices * 3)
       {
@@ -503,7 +672,7 @@ namespace Open3SDCM
       }
 
       //Parse facets
-      m_Triangles = detail::ParseFacets(BinaryNodes);
+      m_Triangles = detail::ParseFacets(BinaryNodes, schema, properties);
       fmt::print(" {} triangles have been read from buffer\n", m_Triangles.size());
       if (m_Triangles.size() != NbFaces)
       {
