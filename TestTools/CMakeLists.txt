@@ -32,6 +32,10 @@ target_include_directories(MeshComparisonTest
 
 target_compile_features(MeshComparisonTest PRIVATE cxx_std_20)
 
+if(MSVC)
+  target_compile_options(MeshComparisonTest PRIVATE "/utf-8")
+endif()
+
 # Set output directory
 set_target_properties(MeshComparisonTest PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin

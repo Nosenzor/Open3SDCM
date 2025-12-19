@@ -47,5 +47,6 @@ if(MSVC)
   target_compile_options(${PROJECT_NAME}
       PRIVATE
       "/wd4251;"
+      "/utf-8"
   )
 endif()

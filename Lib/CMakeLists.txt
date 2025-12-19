@@ -46,5 +46,6 @@ if(MSVC)
   message("DISABLE warning C4251 (needs to have dll-interface to be used by clients) + fp:strict")
   target_compile_options(${PROJECT_NAME}
       PRIVATE
-      "/wd4251;")
+      "/wd4251;"
+      "/utf-8")
 endif()
