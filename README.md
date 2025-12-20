@@ -17,7 +17,6 @@ Then as an extension a python binding can be build.
 * Read encrypted file
   
 
-
 # How to build
 
 Run the following from the repository root:
@@ -26,6 +25,38 @@ Run the following from the repository root:
 cmake -DCMAKE_BUILD_TYPE=Release --preset ninja-release-vcpkg -S . -B ./builds/ninja-release-vcpkg
 cmake --build ./builds/ninja-release-vcpkg
 ```
+
+# Releases
+
+## Creating a Release
+
+### Method 1: Create a Git Tag (Automated)
+
+1. Update the version in the `VERSION` file
+2. Commit your changes
+3. Create and push a tag:
+```bash
+git tag v0.1.1
+git push origin v0.1.1
+```
+
+The GitHub Actions workflow will automatically build binaries for Linux, macOS, and Windows and create a release.
+
+### Method 2: Manual Workflow Dispatch
+
+You can trigger a release build without creating a tag:
+
+1. Go to the "Actions" tab on GitHub
+2. Select the "Release" workflow
+3. Click "Run workflow"
+4. Enter the version (e.g., `v0.1.1`)
+5. Click "Run workflow"
+
+This is useful for testing or rebuilding a release without creating a new tag.
+
+## Version Management
+
+The project version is managed in the `VERSION` file at the repository root. This version is automatically read by CMake and used for all subprojects (CLI, Lib, TestTools).
 
 # Reading a DCM file (reverse engineering Documentation)
 
