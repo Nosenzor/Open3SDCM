@@ -16,9 +16,10 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_TOOLCHAIN_FILE": {
-        "type": "FILEPATH",
-        "value": "./vcpkg/scripts/buildsystems/vcpkg.cmake"
-        }
+          "type": "FILEPATH",
+          "value": "./vcpkg/scripts/buildsystems/vcpkg.cmake"
+        },
+        "CMAKE_MAKE_PROGRAM": "ninja"
       }
     },
     {
