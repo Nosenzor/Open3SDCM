@@ -6,11 +6,11 @@ Then as an extension a python binding can be build.
 
 ## Goals of the project :
 
-1. Read an extract the mesh(es) geometrical information (vertices coordinates and triangles) from DCM
-2. Convert to STL, PLY, OBJ
-3. Read colors applied on meshes
-4. Read UV mapping and Texture
-4. Read extra curves
+1. Read an extract the mesh(es) geometrical information (vertices coordinates and triangles) from DCM : **Done** can read scheam CA, CB and CC. Should read schmeas CE if encruption key is provided (untested)
+2. Convert to STL, PLY, OBJ : **Done** using assimp 
+3. Read colors applied on meshes : To do
+4. Read UV mapping and Texture : To do
+4. Read extra curves: To do
 
 # Not part of the goals (at least at the beginning)
 * Write DCMs
