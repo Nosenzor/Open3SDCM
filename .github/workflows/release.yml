@@ -30,6 +30,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build
+          which ninja
+          ninja --version
 
       - name: Setup ccache
         uses: Chocobo1/setup-ccache-action@v1.4.3
@@ -42,6 +44,8 @@ jobs:
         with:
           vcpkgDirectory: '${{ github.workspace }}/vcpkg'
           vcpkgJsonGlob: '**/vcpkg.json'
+        env:
+          CMAKE_MAKE_PROGRAM: /usr/bin/ninja
 
       - name: Run CMake+vcpkg+Ninja
         uses: lukka/run-cmake@v10.7
@@ -50,6 +54,8 @@ jobs:
           cmakeListsTxtPath: '${{ github.workspace }}/CMakeLists.txt'
           configurePreset: 'ninja-release-vcpkg'
           buildPreset: 'ninja-release-vcpkg'
+        env:
+          CMAKE_MAKE_PROGRAM: /usr/bin/ninja
 
       - name: Package Binary
         run: |
