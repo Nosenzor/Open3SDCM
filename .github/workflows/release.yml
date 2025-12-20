@@ -14,57 +14,121 @@ on:
 permissions:
   contents: write
 
-jobs:
-  build-and-release:
-    name: Build and Release
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        include:
-          - os: ubuntu-latest
-            artifact_name: Open3SDCM-linux
-            executable_path: builds/ninja-release-vcpkg/bin/Open3SDCMCLI
-          - os: macos-latest
-            artifact_name: Open3SDCM-macos
-            executable_path: builds/ninja-release-vcpkg/bin/Open3SDCMCLI
-          - os: windows-latest
-            artifact_name: Open3SDCM-windows
-            executable_path: builds/ninja-release-vcpkg/bin/Open3SDCMCLI.exe
+env:
+  VCPKG_DEFAULT_TRIPLET_WINDOWS: x64-windows
 
+jobs:
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
 
-      - name: Install Ninja (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build
-
-      - name: Install Ninja (macOS)
-        if: runner.os == 'macOS'
-        run: brew install ninja
-
-      - name: Install Ninja (Windows)
-        if: runner.os == 'Windows'
-        run: choco install ninja
-
       - name: Setup ccache
         uses: Chocobo1/setup-ccache-action@v1.4.3
-        if: runner.os != 'Windows'
 
       - uses: lukka/get-cmake@latest
 
       - name: Restore artifacts, or setup vcpkg
         uses: lukka/run-vcpkg@v11
+        id: runvcpkg
         with:
           vcpkgDirectory: '${{ github.workspace }}/vcpkg'
           vcpkgJsonGlob: '**/vcpkg.json'
 
       - name: Run CMake+vcpkg+Ninja
         uses: lukka/run-cmake@v10.7
+        id: runcmake
+        with:
+          cmakeListsTxtPath: '${{ github.workspace }}/CMakeLists.txt'
+          configurePreset: 'ninja-release-vcpkg'
+          buildPreset: 'ninja-release-vcpkg'
+
+      - name: Package Binary
+        run: |
+          mkdir -p release
+          cp builds/ninja-release-vcpkg/bin/Open3SDCMCLI release/
+          cd release
+          tar -czvf ../Open3SDCM-linux.tar.gz *
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Open3SDCM-linux
+          path: Open3SDCM-linux.tar.gz
+
+  build-macos:
+    name: Build macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup ccache
+        uses: Chocobo1/setup-ccache-action@v1.4.3
+
+      - uses: lukka/get-cmake@latest
+
+      - name: Restore artifacts, or setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        id: runvcpkg
+        with:
+          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+          vcpkgJsonGlob: '**/vcpkg.json'
+
+      - name: Run CMake+vcpkg+Ninja
+        uses: lukka/run-cmake@v10.7
+        id: runcmake
+        with:
+          cmakeListsTxtPath: '${{ github.workspace }}/CMakeLists.txt'
+          configurePreset: 'ninja-release-vcpkg'
+          buildPreset: 'ninja-release-vcpkg'
+
+      - name: Package Binary
+        run: |
+          mkdir -p release
+          cp builds/ninja-release-vcpkg/bin/Open3SDCMCLI release/
+          cd release
+          tar -czvf ../Open3SDCM-macos.tar.gz *
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Open3SDCM-macos
+          path: Open3SDCM-macos.tar.gz
+
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    env:
+      VCPKG_DEFAULT_TRIPLET: x64-windows
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.7
+
+      - uses: lukka/get-cmake@latest
+
+      - name: Restore artifacts, or setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        id: runvcpkg
+        with:
+          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+          vcpkgJsonGlob: '**/vcpkg.json'
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+
+      - name: Run CMake+vcpkg+Ninja
+        uses: lukka/run-cmake@v10.7
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+        id: runcmake
         with:
           cmakeListsTxtPath: '${{ github.workspace }}/CMakeLists.txt'
           configurePreset: 'ninja-release-vcpkg'
@@ -74,26 +138,32 @@ jobs:
         shell: bash
         run: |
           mkdir -p release
-          if [ -f "${{ matrix.executable_path }}" ]; then
-            cp "${{ matrix.executable_path }}" release/
-          else
-            echo "Executable not found at ${{ matrix.executable_path }}"
-            find builds -name "Open3SDCMCLI*"
-            exit 1
-          fi
-          
+          cp builds/ninja-release-vcpkg/bin/Open3SDCMCLI.exe release/
           cd release
-          if [ "${{ runner.os }}" == "Windows" ]; then
-            7z a ../${{ matrix.artifact_name }}.zip *
-          else
-            tar -czvf ../${{ matrix.artifact_name }}.tar.gz *
-          fi
+          7z a ../Open3SDCM-windows.zip *
 
-      - name: Upload Release Asset
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Open3SDCM-windows
+          path: Open3SDCM-windows.zip
+
+  create-release:
+    name: Create Release
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.event.inputs.version || github.ref_name }}
           files: |
-            ${{ matrix.artifact_name }}.zip
-            ${{ matrix.artifact_name }}.tar.gz
+            artifacts/Open3SDCM-linux/Open3SDCM-linux.tar.gz
+            artifacts/Open3SDCM-macos/Open3SDCM-macos.tar.gz
+            artifacts/Open3SDCM-windows/Open3SDCM-windows.zip
 
