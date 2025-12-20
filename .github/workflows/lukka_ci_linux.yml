@@ -16,16 +16,22 @@ on:
       - main
     paths-ignore:
       - .github/workflows/lukka_ci_mac.yml
+      - .github/workflows/lukka_ci_mac_arm.yml
       - .github/workflows/lukka_ci_win.yml
+      - '**/BenchmarkResults/**'
+      - '**/FunctionTests/**'
       - '**/**.md'
   pull_request:
     branches:
       - main
     paths-ignore:
       - .github/workflows/lukka_ci_mac.yml
+      - .github/workflows/lukka_ci_mac_arm.yml
       - .github/workflows/lukka_ci_win.yml
+      - '**/BenchmarkResults/**'
+      - '**/FunctionTests/**'
       - '**/**.md'
-  workflow_dispatch:  
+  workflow_dispatch:
 
 jobs:
   job:
@@ -34,10 +40,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-      #os: [ubuntu-latest, macos-latest, windows-latest]
+        #os: [ubuntu-latest, macos-latest, windows-latest]
         os: [ubuntu-latest]
 
     steps:
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          # this might remove tools that are actually needed,
+          # if set to "true" but frees about 6 GB
+          tool-cache: false
+
+          # all of these default to true, but feel free to set to
+          # "false" if necessary for your workflow
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: false
+          swap-storage: true
 
       - uses: actions/checkout@v4
         with:
@@ -52,7 +73,7 @@ jobs:
         shell: bash
 
       - name: Restore artifacts, or setup vcpkg for building artifacts
-        uses: lukka/run-vcpkg@v11
+        uses: lukka/run-vcpkg@v11.5
         id: runvcpkg
         with:
           # This one is not needed, as it is the default value anyway.
