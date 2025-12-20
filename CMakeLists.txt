@@ -146,3 +146,5 @@ endif()
 
 add_subdirectory(Lib)
 add_subdirectory(CLI)
+add_subdirectory(TestTools)
+

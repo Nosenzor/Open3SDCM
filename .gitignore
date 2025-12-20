@@ -14,3 +14,4 @@ cmake-build*/**
 .idea/**
 /builds/
 /cmake-build-debug/
+/hps_parser.py
