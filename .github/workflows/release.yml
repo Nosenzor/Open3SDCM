@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build and Release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            artifact_name: Open3SDCM-linux
+            executable_path: builds/ninja-release-vcpkg/bin/Open3SDCMCLI
+          - os: macos-latest
+            artifact_name: Open3SDCM-macos
+            executable_path: builds/ninja-release-vcpkg/bin/Open3SDCMCLI
+          - os: windows-latest
+            artifact_name: Open3SDCM-windows
+            executable_path: builds/ninja-release-vcpkg/bin/Open3SDCMCLI.exe
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Setup ccache
+        uses: Chocobo1/setup-ccache-action@v1.4.3
+        if: runner.os != 'Windows'
+
+      - uses: lukka/get-cmake@latest
+
+      - name: Restore artifacts, or setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+          vcpkgJsonGlob: '**/vcpkg.json'
+
+      - name: Run CMake+vcpkg+Ninja
+        uses: lukka/run-cmake@v10.7
+        with:
+          cmakeListsTxtPath: '${{ github.workspace }}/CMakeLists.txt'
+          configurePreset: 'ninja-release-vcpkg'
+          buildPreset: 'ninja-release-vcpkg'
+
+      - name: Package Binary
+        shell: bash
+        run: |
+          mkdir -p release
+          if [ -f "${{ matrix.executable_path }}" ]; then
+            cp "${{ matrix.executable_path }}" release/
+          else
+            echo "Executable not found at ${{ matrix.executable_path }}"
+            find builds -name "Open3SDCMCLI*"
+            exit 1
+          fi
+          
+          cd release
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            7z a ../${{ matrix.artifact_name }}.zip *
+          else
+            tar -czvf ../${{ matrix.artifact_name }}.tar.gz *
+          fi
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            ${{ matrix.artifact_name }}.zip
+            ${{ matrix.artifact_name }}.tar.gz
+

@@ -49,7 +49,9 @@ run_vcpkg(
 
 # Set the project name and language
 string(TIMESTAMP TODAY "%Y%m%d")
-project(Open3SDCM LANGUAGES CXX C VERSION 0.1)
+file(READ "VERSION" ProjectVersion)
+string(STRIP "${ProjectVersion}" ProjectVersion)
+project(Open3SDCM LANGUAGES CXX C VERSION ${ProjectVersion})
 
 
 
