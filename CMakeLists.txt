@@ -49,15 +49,19 @@ run_vcpkg(
 
 # Set the project name and language
 string(TIMESTAMP TODAY "%Y%m%d")
-file(READ "VERSION" ProjectVersion)
-string(STRIP "${ProjectVersion}" ProjectVersion)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
+  file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" ProjectVersion)
+  string(STRIP "${ProjectVersion}" ProjectVersion)
+else()
+  set(ProjectVersion "0.1.0")
+endif()
 project(Open3SDCM LANGUAGES CXX C VERSION ${ProjectVersion})
 
 
 
 # Build tests and tutorials
-option(Open3SDCM_BUILD_TESTS      "Build All Tests"               ON})
-option(Open3SDCM_BUILD_BENCH      "Build Benchmark"               OFF})
+option(Open3SDCM_BUILD_TESTS      "Build All Tests"               ON)
+option(Open3SDCM_BUILD_BENCH      "Build Benchmark"               OFF)
 
 message("BUILD TYPE : " ${CMAKE_BUILD_TYPE} " USING :" ${CMAKE_CXX_COMPILER_ID} " version : " ${CMAKE_CXX_COMPILER_VERSION})
 message("CMAKE_SYSTEM_PROCESSOR = " ${CMAKE_SYSTEM_PROCESSOR})
