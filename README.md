@@ -26,6 +26,34 @@ cmake -DCMAKE_BUILD_TYPE=Release --preset ninja-release-vcpkg -S . -B ./builds/n
 cmake --build ./builds/ninja-release-vcpkg
 ```
 
+# How to run
+
+After building, the CLI executable will be located at `./builds/ninja-release-vcpkg/bin/Open3SDCMCLI` (or similar path depending on your build configuration).
+
+## Basic usage
+
+Convert DCM files in a directory to PLY format:
+
+```bash
+./builds/ninja-release-vcpkg/bin/Open3SDCMCLI -i /path/to/input/directory -o /path/to/output/directory --format ply
+```
+
+## Command line options
+
+- `-i, --input_dir`: Input directory containing DCM files
+- `-o, --output_dir`: Output directory for exported meshes
+- `-f, --format`: Output format (stl, ply, obj). Default is stl
+- `--help`: Show help message
+
+## Example
+
+```bash
+# Convert all DCM files in TestData/Hole3x5 to PLY files in Output/
+./builds/ninja-release-vcpkg/bin/Open3SDCMCLI -i TestData/Hole3x5 -o Output --format ply
+```
+
+The tool will recursively search the input directory for DCM files and export each mesh to the specified output format.
+
 # Releases
 
 ## Creating a Release
@@ -90,7 +118,26 @@ A documentation of the HPS (Himsa Packed Scan) format can be found [here](https:
 
 Vertices are in float format (4 bytes per coordinates) thus 12 bytes per vertex.
 
+## Information found : Summary of Findings
 
+
+Encryption System: The executable uses a Blowfish encryption algorithm in ECB mode.
+Encryption Key: The key is hardcoded in the binary as 0123456789abcdef (16 bytes / 128 bits).
+XML Structure: The encryption is applied to data within <CE> (Custom Encryption) tags, where:
+•
+The data is base64 encoded
+•
+The base64_encoded_bytes attribute indicates the encrypted data
+•
+The check_value attribute may be used for integrity verification
+Location in Binary: The key was found in the binary at offset 0x000c26b0 as part of a test pattern sequence.
+The encryption scheme follows this pattern:
+1.
+Original data is encrypted using Blowfish with the hardcoded key
+2.
+Encrypted data is base64 encoded
+3.
+Result is stored in the XML structure within <CE> tags
 
 
 # Useful links

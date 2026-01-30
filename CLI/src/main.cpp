@@ -92,6 +92,8 @@ int main(int argc, const char** argv)
           ("input_dir,i", po::value<std::filesystem::path>(), "input directory")
             ("output_dir,o", po::value<std::filesystem::path>(), "output directory")
               ("format,f", po::value<std::string>(), "output format stl,ply,obj")
+                  ("decryption_key,k", po::value<std::string>(), "custom Blowfish decryption key (hex format, 16 bytes)")
+                  ("key_discovery,d", po::value<bool>()->default_value(false), "enable key discovery mode to find correct Blowfish key")
                   ;
 
   po::variables_map vm;
@@ -111,6 +113,27 @@ int main(int argc, const char** argv)
     OutputFormat=vm["format"].as<std::string>();
   }
   fmt::print("Output Format Mode {}\n", OutputFormat);
+
+  // Parse custom decryption key if provided
+  std::vector<unsigned char> customDecryptionKey;
+  if (vm.count("decryption_key"))
+  {
+    std::string keyHex = vm["decryption_key"].as<std::string>();
+    if (keyHex.length() == 32) { // 16 bytes = 32 hex characters
+      customDecryptionKey.resize(16);
+      for (int i = 0; i < 16; ++i) {
+        std::string byteString = keyHex.substr(i*2, 2);
+        unsigned char byte = static_cast<unsigned char>(std::stoi(byteString, nullptr, 16));
+        customDecryptionKey[i] = byte;
+      }
+      fmt::print("Using custom decryption key\n");
+    } else {
+      fmt::print("Error: Decryption key must be 32 hex characters (16 bytes)\n");
+    }
+  }
+
+  // Check if key discovery mode is enabled
+  bool keyDiscoveryMode = vm["key_discovery"].as<bool>();
   std::filesystem::path InputDir;
   std::vector<std::filesystem::path> AllInFiles;
   if (vm.count("input_dir"))
@@ -150,6 +173,12 @@ int main(int argc, const char** argv)
   for (const auto& inputFile : AllInFiles)
   {
     Open3SDCM::DCMParser Parser;
+    if (keyDiscoveryMode) {
+        Parser.SetKeyDiscoveryMode(true);
+    }
+    if (!customDecryptionKey.empty()) {
+        Parser.SetCustomDecryptionKey(customDecryptionKey);
+    }
     Parser.ParseDCM(inputFile);
 
     fmt::print("Parsed {} vertices and {} triangles from {}\n",

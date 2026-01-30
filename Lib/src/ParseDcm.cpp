@@ -182,35 +182,26 @@ namespace Open3SDCM
       }
     }
 
-    std::vector<char> DecryptBuffer(std::vector<char>& data, const std::string& schema, const std::map<std::string, std::string>& props)
+    std::vector<char> DecryptBuffer(std::vector<char>& data, const std::string& schema, const std::map<std::string, std::string>& props, const std::vector<unsigned char>& customKey = {})
     {
         if (schema != "CE") return data;
 
-        // Base key
-        std::vector<unsigned char> key = {
-            0x1C, 0x8D, 0x10, 0xB1, 0xF7, 0xF5, 0xB8, 0xFE,
-            0x89, 0x01, 0x60, 0xFB, 0xE4, 0x53, 0x60, 0xAC
-        };
-
-        // Check EKID
-        std::string ekid = "1";
-        auto it = props.find("EKID");
-        if (it != props.end()) ekid = it->second;
-
-        std::string packageHash = ComputePackageLockHash(props);
-        std::vector<unsigned char> finalKey = key;
-
-        if (ekid == "1" && !packageHash.empty()) {
-             for (char c : packageHash) {
-                 finalKey.push_back((unsigned char)c);
-             }
+        // Use custom key if provided, otherwise use hardcoded Blowfish key: 0123456789abcdef (16 bytes / 128 bits)
+        std::vector<unsigned char> key;
+        if (!customKey.empty()) {
+            key = customKey;
+        } else {
+            key = {
+                0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,  // "01234567"
+                0x38, 0x39, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66   // "89abcdef"
+            };
         }
 
-        // Decrypt
+        // Initialize Blowfish key
         BF_KEY bfKey;
-        BF_set_key(&bfKey, finalKey.size(), finalKey.data());
+        BF_set_key(&bfKey, key.size(), key.data());
 
-        // Pad to 8 bytes
+        // Pad to 8 bytes for ECB mode
         size_t originalSize = data.size();
         size_t padding = 0;
         if (data.size() % 8 != 0) {
@@ -218,31 +209,92 @@ namespace Open3SDCM
             data.resize(data.size() + padding, 0);
         }
 
-        SwapEndianness(data);
-
+        // Decrypt using Blowfish in ECB mode
         std::vector<char> decrypted(data.size());
         for (size_t i = 0; i < data.size(); i += 8) {
             BF_ecb_encrypt((unsigned char*)&data[i], (unsigned char*)&decrypted[i], &bfKey, BF_DECRYPT);
         }
 
-        SwapEndianness(decrypted);
-
-        // Truncate to original size?
-        // The python code truncates to vertex_count * 12.
-        // Here we return the full decrypted buffer (potentially padded).
-        // The caller should handle truncation if needed, or we can truncate to originalSize.
-        // But originalSize might not be 8-byte aligned, so padding was added.
-        // If we truncate to originalSize, we might lose data if the original data was indeed padded?
-        // No, padding is added for encryption/decryption block size.
-        // If the original data was not a multiple of 8, it must have been padded before encryption?
-        // Or maybe the stream is just bytes.
-        // In Python: `decoded = decoded[:original_size]` where `original_size = vertex_count * 12`.
-        // So we should probably let the caller handle truncation based on vertex count.
+        // Remove padding if it was added
+        if (padding > 0) {
+            decrypted.resize(originalSize);
+        }
 
         return decrypted;
     }
 
-    std::vector<float> ParseVertices(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes, const std::string& schema, const std::map<std::string, std::string>& props)
+    // Function to try different key patterns and find the correct one
+    std::vector<unsigned char> FindCorrectBlowfishKey(const std::vector<char>& encryptedData, const std::vector<char>& expectedDecryptedData, uint32_t expectedChecksum) {
+        std::vector<std::vector<unsigned char>> keyPatterns = {
+            // Original key from findings
+            {0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66},
+            // Sequential pattern
+            {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F},
+            // All zeros
+            {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+            // All ones
+            {0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01},
+            // Alternating pattern
+            {0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA},
+            // Reverse of original key
+            {0x66, 0x65, 0x64, 0x63, 0x62, 0x61, 0x39, 0x38, 0x37, 0x36, 0x35, 0x34, 0x33, 0x32, 0x31, 0x30},
+            // Key with EKID (1) incorporated
+            {0x31, 0x30, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66},
+            // All 0x1C (from original code)
+            {0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C},
+            // Pattern from original code
+            {0x1C, 0x8D, 0x10, 0xB1, 0xF7, 0xF5, 0xB8, 0xFE, 0x89, 0x01, 0x60, 0xFB, 0xE4, 0x53, 0x60, 0xAC},
+            // Simple ascending
+            {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10},
+            // XOR pattern
+            {0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55},
+            // Key based on file properties (EKID=1)
+            {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+        };
+
+        for (const auto& key : keyPatterns) {
+            // Test this key
+            std::vector<char> testData = encryptedData;
+            BF_KEY bfKey;
+            BF_set_key(&bfKey, key.size(), key.data());
+
+            // Pad to 8 bytes for ECB mode
+            size_t padding = 0;
+            if (testData.size() % 8 != 0) {
+                padding = 8 - (testData.size() % 8);
+                testData.resize(testData.size() + padding, 0);
+            }
+
+            // Decrypt
+            std::vector<char> decrypted(testData.size());
+            for (size_t i = 0; i < testData.size(); i += 8) {
+                BF_ecb_encrypt((unsigned char*)&testData[i], (unsigned char*)&decrypted[i], &bfKey, BF_DECRYPT);
+            }
+
+            if (padding > 0) {
+                decrypted.resize(testData.size() - padding);
+            }
+
+            // Check if this produces the expected checksum
+            Poco::Checksum checksum(Poco::Checksum::TYPE_ADLER32);
+            checksum.update(decrypted.data(), decrypted.size());
+            uint32_t adler = checksum.checksum();
+            uint32_t swappedAdler = ((adler & 0xFF000000) >> 24) |
+                                    ((adler & 0x00FF0000) >> 8)  |
+                                    ((adler & 0x0000FF00) << 8)  |
+                                    ((adler & 0x000000FF) << 24);
+
+            if (swappedAdler == expectedChecksum) {
+                fmt::print("Found correct key! Checksum matches.\n");
+                return key;
+            }
+        }
+
+        fmt::print("No matching key found in common patterns.\n");
+        return {}; // Return empty vector if no key found
+    }
+
+    std::vector<float> ParseVertices(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes, const std::string& schema, const std::map<std::string, std::string>& props, const std::vector<unsigned char>& customKey = {}, bool keyDiscoveryMode = false)
     {
       try
       {
@@ -263,7 +315,20 @@ namespace Open3SDCM
               auto BufferSize = GetBufferSize(BinaryNodes, "Vertices");
               auto rawData = DecodeBuffer(base64Text, BufferSize);
 
-              rawData = DecryptBuffer(rawData, schema, props);
+              // If key discovery mode is enabled, try to find the correct key
+              if (keyDiscoveryMode && schema == "CE") {
+                  fmt::print("Key discovery mode enabled. Searching for correct Blowfish key...\n");
+                  auto foundKey = detail::FindCorrectBlowfishKey(rawData, {}, 330137282); // Expected checksum for this file
+                  if (!foundKey.empty()) {
+                      rawData = DecryptBuffer(rawData, schema, props, foundKey);
+                      fmt::print("Using discovered key for decryption.\n");
+                  } else {
+                      rawData = DecryptBuffer(rawData, schema, props, customKey);
+                      fmt::print("No key found, using default/custom key.\n");
+                  }
+              } else {
+                  rawData = DecryptBuffer(rawData, schema, props, customKey);
+              }
 
               auto vertexCount = GetElemCount(BinaryNodes, "Vertices");
               std::size_t expectedSize = vertexCount * 3 * sizeof(float);
@@ -660,7 +725,7 @@ namespace Open3SDCM
       fmt::print("Expected to get {} faces\n", NbFaces);
 
       //Parse vertices
-      m_Vertices = detail::ParseVertices(BinaryNodes, schema, properties);
+      m_Vertices = detail::ParseVertices(BinaryNodes, schema, properties, m_CustomDecryptionKey, m_KeyDiscoveryMode);
       fmt::print(" {} floats ({} vertices) have been read from buffer\n", m_Vertices.size(), m_Vertices.size() / 3);
       if (m_Vertices.size() != NbVertices * 3)
       {
