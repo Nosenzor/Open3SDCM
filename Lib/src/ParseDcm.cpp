@@ -223,8 +223,130 @@ namespace Open3SDCM
         return decrypted;
     }
 
+    // Function to derive keys based on file properties
+    std::vector<std::vector<unsigned char>> DeriveBlowfishKeys(const std::map<std::string, std::string>& props) {
+        std::vector<std::vector<unsigned char>> derivedKeys;
+        
+        // Base key from executable findings
+        std::vector<unsigned char> baseKey = {
+            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,  // "01234567"
+            0x38, 0x39, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66   // "89abcdef"
+        };
+        
+        // Get EKID from properties (default to 1)
+        uint32_t ekid = 1;
+        if (props.find("EKID") != props.end()) {
+            auto [ptr, ec] = std::from_chars(props.at("EKID").data(), props.at("EKID").data() + props.at("EKID").size(), ekid);
+        }
+        
+        // Get PackageLockList hash
+        std::string packageLockHash = "";
+        if (props.find("PackageLockList") != props.end()) {
+            packageLockHash = ComputePackageLockHash(props);
+        }
+        
+        // Derive keys using different patterns based on schemaCE_findings.md
+        
+        // 1. Base key (original)
+        derivedKeys.push_back(baseKey);
+        
+        // 2. EKID-based key derivation: base_key XOR ekid_pattern
+        {
+            std::vector<unsigned char> derivedKey = baseKey;
+            for (size_t i = 0; i < derivedKey.size(); ++i) {
+                derivedKey[i] ^= static_cast<unsigned char>(ekid ^ (i % 256));
+            }
+            derivedKeys.push_back(derivedKey);
+        }
+        
+        // 3. EKID-based key derivation: base_key with EKID in first byte
+        {
+            std::vector<unsigned char> derivedKey = baseKey;
+            derivedKey[0] = static_cast<unsigned char>(ekid);
+            derivedKeys.push_back(derivedKey);
+        }
+        
+        // 4. PackageLockList hash-based derivation
+        if (!packageLockHash.empty()) {
+            std::vector<unsigned char> derivedKey = baseKey;
+            for (size_t i = 0; i < derivedKey.size(); ++i) {
+                size_t hashIndex = i % packageLockHash.size();
+                uint8_t hashByte = static_cast<uint8_t>(packageLockHash[hashIndex]);
+                derivedKey[i] ^= hashByte;
+            }
+            derivedKeys.push_back(derivedKey);
+        }
+        
+        // 5. Combined EKID and hash derivation
+        if (!packageLockHash.empty()) {
+            std::vector<unsigned char> derivedKey = baseKey;
+            for (size_t i = 0; i < derivedKey.size(); ++i) {
+                size_t hashIndex = i % packageLockHash.size();
+                uint8_t hashByte = static_cast<uint8_t>(packageLockHash[hashIndex]);
+                uint8_t ekidByte = static_cast<uint8_t>(ekid ^ (i % 256));
+                derivedKey[i] ^= (hashByte ^ ekidByte);
+            }
+            derivedKeys.push_back(derivedKey);
+        }
+        
+        // 6. Key with EKID (1) incorporated (from original patterns)
+        derivedKeys.push_back({
+            0x31, 0x30, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66
+        });
+        
+        // 7. Key based on file properties (EKID=1) (from original patterns)
+        derivedKeys.push_back({
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+        });
+        
+        return derivedKeys;
+    }
+
     // Function to try different key patterns and find the correct one
-    std::vector<unsigned char> FindCorrectBlowfishKey(const std::vector<char>& encryptedData, const std::vector<char>& expectedDecryptedData, uint32_t expectedChecksum) {
+    std::vector<unsigned char> FindCorrectBlowfishKey(const std::vector<char>& encryptedData, const std::map<std::string, std::string>& props, uint32_t expectedChecksum) {
+        // First try derived keys based on file properties
+        auto derivedKeys = DeriveBlowfishKeys(props);
+        
+        for (const auto& key : derivedKeys) {
+            // Test this key
+            std::vector<char> testData = encryptedData;
+            BF_KEY bfKey;
+            BF_set_key(&bfKey, key.size(), key.data());
+
+            // Pad to 8 bytes for ECB mode
+            size_t padding = 0;
+            if (testData.size() % 8 != 0) {
+                padding = 8 - (testData.size() % 8);
+                testData.resize(testData.size() + padding, 0);
+            }
+
+            // Decrypt
+            std::vector<char> decrypted(testData.size());
+            for (size_t i = 0; i < testData.size(); i += 8) {
+                BF_ecb_encrypt((unsigned char*)&testData[i], (unsigned char*)&decrypted[i], &bfKey, BF_DECRYPT);
+            }
+
+            if (padding > 0) {
+                decrypted.resize(testData.size() - padding);
+            }
+
+            // Check if this produces the expected checksum
+            Poco::Checksum checksum(Poco::Checksum::TYPE_ADLER32);
+            checksum.update(decrypted.data(), decrypted.size());
+            uint32_t adler = checksum.checksum();
+            uint32_t swappedAdler = ((adler & 0xFF000000) >> 24) |
+                                    ((adler & 0x00FF0000) >> 8)  |
+                                    ((adler & 0x0000FF00) << 8)  |
+                                    ((adler & 0x000000FF) << 24);
+
+            if (swappedAdler == expectedChecksum) {
+                fmt::print("Found correct derived key! Checksum matches.
+");
+                return key;
+            }
+        }
+        
+        // If derived keys don't work, try the original hardcoded patterns
         std::vector<std::vector<unsigned char>> keyPatterns = {
             // Original key from findings
             {0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66},
@@ -238,8 +360,6 @@ namespace Open3SDCM
             {0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA, 0x55, 0xAA},
             // Reverse of original key
             {0x66, 0x65, 0x64, 0x63, 0x62, 0x61, 0x39, 0x38, 0x37, 0x36, 0x35, 0x34, 0x33, 0x32, 0x31, 0x30},
-            // Key with EKID (1) incorporated
-            {0x31, 0x30, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66},
             // All 0x1C (from original code)
             {0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C, 0x1C},
             // Pattern from original code
@@ -251,6 +371,50 @@ namespace Open3SDCM
             // Key based on file properties (EKID=1)
             {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
         };
+        
+        for (const auto& key : keyPatterns) {
+            // Test this key
+            std::vector<char> testData = encryptedData;
+            BF_KEY bfKey;
+            BF_set_key(&bfKey, key.size(), key.data());
+
+            // Pad to 8 bytes for ECB mode
+            size_t padding = 0;
+            if (testData.size() % 8 != 0) {
+                padding = 8 - (testData.size() % 8);
+                testData.resize(testData.size() + padding, 0);
+            }
+
+            // Decrypt
+            std::vector<char> decrypted(testData.size());
+            for (size_t i = 0; i < testData.size(); i += 8) {
+                BF_ecb_encrypt((unsigned char*)&testData[i], (unsigned char*)&decrypted[i], &bfKey, BF_DECRYPT);
+            }
+
+            if (padding > 0) {
+                decrypted.resize(testData.size() - padding);
+            }
+
+            // Check if this produces the expected checksum
+            Poco::Checksum checksum(Poco::Checksum::TYPE_ADLER32);
+            checksum.update(decrypted.data(), decrypted.size());
+            uint32_t adler = checksum.checksum();
+            uint32_t swappedAdler = ((adler & 0xFF000000) >> 24) |
+                                    ((adler & 0x00FF0000) >> 8)  |
+                                    ((adler & 0x0000FF00) << 8)  |
+                                    ((adler & 0x000000FF) << 24);
+
+            if (swappedAdler == expectedChecksum) {
+                fmt::print("Found correct key! Checksum matches.
+");
+                return key;
+            }
+        }
+
+        fmt::print("No matching key found in common patterns.
+");
+        return {}; // Return empty vector if no key found
+    }
 
         for (const auto& key : keyPatterns) {
             // Test this key
@@ -318,7 +482,7 @@ namespace Open3SDCM
               // If key discovery mode is enabled, try to find the correct key
               if (keyDiscoveryMode && schema == "CE") {
                   fmt::print("Key discovery mode enabled. Searching for correct Blowfish key...\n");
-                  auto foundKey = detail::FindCorrectBlowfishKey(rawData, {}, 330137282); // Expected checksum for this file
+                  auto foundKey = detail::FindCorrectBlowfishKey(rawData, props, 330137282); // Expected checksum for this file
                   if (!foundKey.empty()) {
                       rawData = DecryptBuffer(rawData, schema, props, foundKey);
                       fmt::print("Using discovered key for decryption.\n");

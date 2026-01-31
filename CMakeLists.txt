@@ -57,7 +57,7 @@ else()
 endif()
 project(Open3SDCM LANGUAGES CXX C VERSION ${ProjectVersion})
 
-
+find_package(OpenSSL REQUIRED)
 
 # Build tests and tutorials
 option(Open3SDCM_BUILD_TESTS      "Build All Tests"               ON)
@@ -153,4 +153,3 @@ endif()
 add_subdirectory(Lib)
 add_subdirectory(CLI)
 add_subdirectory(TestTools)
-
