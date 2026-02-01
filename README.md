@@ -1,30 +1,173 @@
 # Open3SDCM
-An attempt to read unencrypted 3Shape DCM.
 
-The project will be written in C++ with the first goal to make a cli command that can convert a DCM file into STL, OBJ or PLY files.
-Then as an extension a python binding can be build.
+An open-source C++ library and CLI tool for converting 3Shape DCM files to standard 3D formats (STL, OBJ, PLY).
 
-## Goals of the project :
+## Features
 
-1. Read an extract the mesh(es) geometrical information (vertices coordinates and triangles) from DCM : **Done** can read scheam CA, CB and CC. Should read schmeas CE if encruption key is provided (untested)
-2. Convert to STL, PLY, OBJ : **Done** using assimp 
-3. Read colors applied on meshes : To do
-4. Read UV mapping and Texture : To do
-4. Read extra curves: To do
+The project aims to provide a comprehensive solution for reading and converting 3Shape DCM files:
 
-# Not part of the goals (at least at the beginning)
-* Write DCMs
-* Read encrypted file
-  
+1. ✅ **Read and extract mesh geometry** (vertices and triangles) from DCM files - **Done** 
+   - Supports schemas CA, CB, CC, and CE (encrypted)
+2. ✅ **Convert to STL, PLY, OBJ** - **Done** (using Assimp)
+3. 🚧 **Read mesh colors** - To do
+4. 🚧 **Read UV mapping and textures** - To do
+5. 🚧 **Read extra curves** - To do
 
-# How to build
+### Not part of the goals (at least initially)
+* Write DCM files
+* Read heavily encrypted files without key
 
-Run the following from the repository root:
+## Building from Source
+
+### Prerequisites
+
+- **C++20 compatible compiler** (GCC 10+, Clang 12+, MSVC 2019+)
+- **CMake** 3.16 or higher
+- **vcpkg** (automatically installed by the build system)
+
+The project uses vcpkg to manage dependencies automatically. The following libraries will be installed:
+- Boost (program_options, dynamic_bitset)
+- Poco (XML, Zip)
+- Assimp
+- fmt
+- spdlog
+- OpenSSL
+
+### Build Instructions
+
+#### Linux / macOS
 
 ```bash
-cmake -DCMAKE_BUILD_TYPE=Release --preset ninja-release-vcpkg -S . -B ./builds/ninja-release-vcpkg
-cmake --build ./builds/ninja-release-vcpkg
+# Clone the repository
+git clone https://github.com/yourusername/Open3SDCM.git
+cd Open3SDCM
+
+# Configure with CMake (uses vcpkg preset)
+cmake --preset ninja-release-vcpkg
+
+# Build
+cmake --build builds/ninja-release-vcpkg -j
+
+# The executable will be in: builds/ninja-release-vcpkg/bin/Open3SDCMCLI
 ```
+
+#### Windows
+
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/Open3SDCM.git
+cd Open3SDCM
+
+# Configure with CMake
+cmake --preset ninja-release-vcpkg
+
+# Build
+cmake --build builds/ninja-release-vcpkg --config Release
+
+# The executable will be in: builds\ninja-release-vcpkg\bin\Open3SDCMCLI.exe
+```
+
+#### Alternative: Debug Build
+
+For development with debug symbols:
+
+```bash
+cmake -S . -B cmake-build-debug -DCMAKE_BUILD_TYPE=Debug
+cmake --build cmake-build-debug -j
+```
+
+## Usage
+
+### Command Line Interface
+
+The CLI tool `Open3SDCMCLI` can convert DCM files in two modes:
+
+#### Single File Conversion
+
+Convert a single DCM file to your desired format:
+
+```bash
+# Convert to STL
+./Open3SDCMCLI -i input.dcm -o output_directory -f stl
+
+# Convert to PLY
+./Open3SDCMCLI -i input.dcm -o output_directory -f ply
+
+# Convert to OBJ
+./Open3SDCMCLI -i input.dcm -o output_directory -f obj
+```
+
+#### Batch Directory Conversion
+
+Convert all DCM files in a directory:
+
+```bash
+# Convert all DCM files in a directory to STL
+./Open3SDCMCLI -i input_directory -o output_directory -f stl
+
+# Convert all DCM files to PLY
+./Open3SDCMCLI -i input_directory -o output_directory -f ply
+```
+
+### Examples
+
+```bash
+# Example 1: Convert a single scan to STL
+./Open3SDCMCLI -i TestData/Handle/HandleAngledLarge.dcm -o ./output -f stl
+
+# Example 2: Convert all DCM files in a folder to PLY
+./Open3SDCMCLI -i TestData/Scan-01 -o ./output -f ply
+
+# Example 3: Convert with full paths
+./Open3SDCMCLI -i /path/to/scan.dcm -o /path/to/output -f obj
+
+# Display help
+./Open3SDCMCLI --help
+```
+
+### Command-line Options
+
+- `-i, --input <path>` : Input DCM file or directory containing DCM files (required)
+- `-o, --output_dir <path>` : Output directory for converted files (required)
+- `-f, --format <format>` : Output format: `stl`, `ply`, or `obj` (default: `stl`)
+- `-h, --help` : Display help message
+
+### Output
+
+The tool creates a timestamped subdirectory in the output directory (e.g., `2025-02-01-14-30-45/`) containing the converted files. The output filename preserves the original DCM filename with the new extension.
+
+## Technical Documentation
+
+### DCM File Format
+
+DCM files are XML-based files containing 3D scan data. The internal format is called HPS (Himsa Packed Scan). Key components:
+
+- **Vertices**: Base64-encoded binary data (floats, 12 bytes per vertex)
+- **Facets**: Base64-encoded compressed triangle data
+- **Schema**: Indicates encoding type (CA, CB, CC, CE)
+  - CE schema uses Blowfish encryption
+
+Example DCM structure:
+
+```xml
+<HPS version="1.0">
+  <Packed_geometry>
+    <Schema>CE</Schema>
+    <Binary_data>
+      <CE version="1.0">
+        <Vertices vertex_count="376" base64_encoded_bytes="4512">...</Vertices>
+        <Facets facet_count="748" base64_encoded_bytes="778">...</Facets>
+      </CE>
+    </Binary_data>
+  </Packed_geometry>
+</HPS>
+```
+
+For detailed format documentation, see:
+- [Packed Scan Standard](https://himsanoah.atlassian.net/wiki/spaces/AD/pages/1309803049/Packed+Scan+Standard)
+- [Format documentation PDF](Packed%20Scan%20Standard%20format%20501.pdf)
+
+
 
 # Releases
 

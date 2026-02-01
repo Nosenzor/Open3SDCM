@@ -87,9 +87,9 @@ int main(int argc, const char** argv)
   // Declare the supported options.
   po::options_description desc("Allowed options");
   desc.add_options()
-    ("help", "produce help message")
+    ("help,h", "produce help message")
         ("action", po::value<std::string>(), "what to do")
-          ("input_dir,i", po::value<std::filesystem::path>(), "input directory")
+          ("input,i", po::value<std::filesystem::path>(), "input file or directory")
             ("output_dir,o", po::value<std::filesystem::path>(), "output directory")
               ("format,f", po::value<std::string>(), "output format stl,ply,obj")
                   ;
@@ -103,6 +103,11 @@ int main(int argc, const char** argv)
     std::stringstream ss;
     ss << desc;
     fmt::print("Help:\n{}\n", ss.str());
+    fmt::print("\nExamples:\n");
+    fmt::print("  Convert a single file:\n");
+    fmt::print("    Open3SDCMCLI -i input.dcm -o output_dir -f stl\n\n");
+    fmt::print("  Convert all DCM files in a directory:\n");
+    fmt::print("    Open3SDCMCLI -i input_dir -o output_dir -f ply\n\n");
     return 1;
   }
   std::string OutputFormat("stl");
@@ -111,21 +116,54 @@ int main(int argc, const char** argv)
     OutputFormat=vm["format"].as<std::string>();
   }
   fmt::print("Output Format Mode {}\n", OutputFormat);
-  std::filesystem::path InputDir;
+
   std::vector<std::filesystem::path> AllInFiles;
-  if (vm.count("input_dir"))
+  if (vm.count("input"))
   {
-    InputDir = vm["input_dir"].as<std::filesystem::path>();
-    fmt::print("inputdir {}\n", InputDir.string());
-    if (fs::exists(InputDir))
+    std::filesystem::path InputPath = vm["input"].as<std::filesystem::path>();
+
+    if (!fs::exists(InputPath))
     {
-      AllInFiles = internal::PopulateFiles(InputDir);
+      fmt::print("/!\\ CANNOT FIND input path {}\n", InputPath.string());
+      return 1;
+    }
+
+    if (fs::is_regular_file(InputPath))
+    {
+      // Single file mode
+      fmt::print("Input file: {}\n", InputPath.string());
+      if (std::any_of(AcceptedDCMExtensions.begin(), AcceptedDCMExtensions.end(),
+          [&](const auto& accepted_extension) {
+            return accepted_extension == InputPath.extension().string();
+          }))
+      {
+        AllInFiles.push_back(InputPath);
+      }
+      else
+      {
+        fmt::print("/!\\ File {} does not have a valid DCM extension\n", InputPath.string());
+        return 1;
+      }
+    }
+    else if (fs::is_directory(InputPath))
+    {
+      // Directory mode
+      fmt::print("Input directory: {}\n", InputPath.string());
+      AllInFiles = internal::PopulateFiles(InputPath);
     }
     else
     {
-      fmt::print("/!\\ CANNOT FIND inputdir {}\n", InputDir.string());
+      fmt::print("/!\\ Input path {} is neither a file nor a directory\n", InputPath.string());
+      return 1;
     }
+
     fmt::print("Found {} files \n", AllInFiles.size());
+  }
+  else
+  {
+    fmt::print("Error: No input specified. Use -i to specify input file or directory.\n");
+    fmt::print("Use --help for usage information.\n");
+    return 1;
   }
 
   std::filesystem::path OutputDir;
