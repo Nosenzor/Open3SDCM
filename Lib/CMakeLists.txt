@@ -15,6 +15,17 @@ find_package(Poco CONFIG REQUIRED COMPONENTS XML JSON Zip)
 find_package(boost_dynamic_bitset CONFIG REQUIRED)
 find_package(assimp CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
+
+if(OpenSSL_FOUND AND NOT TARGET OpenSSL::Crypto)
+    message(STATUS "OpenSSL found but OpenSSL::Crypto target missing. Attempting to create it from variables.")
+    if(EXISTS "${OPENSSL_CRYPTO_LIBRARY}")
+        add_library(OpenSSL::Crypto UNKNOWN IMPORTED)
+        set_target_properties(OpenSSL::Crypto PROPERTIES
+            IMPORTED_LOCATION "${OPENSSL_CRYPTO_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${OPENSSL_INCLUDE_DIR}")
+    endif()
+endif()
+
 set(SOURCES
         src/ParseDcm.h
         src/ParseDcm.cpp

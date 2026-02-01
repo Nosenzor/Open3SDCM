@@ -57,6 +57,11 @@ else()
 endif()
 project(Open3SDCM LANGUAGES CXX C VERSION ${ProjectVersion})
 
+if (APPLE)
+  # Hint for FindOpenSSL
+  set(OPENSSL_ROOT_DIR "/usr/local/opt/openssl")
+endif ()
+
 find_package(OpenSSL REQUIRED)
 
 # Build tests and tutorials
@@ -139,9 +144,6 @@ project_options(
     # CONAN_PROFILE ${profile_path}
 )
 
-if (APPLE)
-  add_definitions(-DOPENSSL_ROOT_DIR=/usr/local/opt/openssl)
-endif ()
 
 if (${CMAKE_CXX_COMPILER_ID} STREQUAL "MSVC" OR WIN32)
     # set stuff for windows)
