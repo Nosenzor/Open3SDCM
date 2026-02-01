@@ -196,8 +196,9 @@ namespace Open3SDCM
       }
       else
       {
+        fmt::print("Use default key");
         key = {
-          0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,// "01234567"
+          0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, // "01234567"
           0x38, 0x39, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66 // "89abcdef"
         };
       }
@@ -255,6 +256,30 @@ namespace Open3SDCM
       {
         packageLockHash = ComputePackageLockHash(props);
       }
+      
+      // Get SourceApp for more specific key derivation
+      std::string sourceApp = "";
+      if (props.find("SourceApp") != props.end())
+      {
+        sourceApp = props.at("SourceApp");
+      }
+      
+      // Get file-specific properties that might affect key derivation
+      std::string filePropertiesHash = "";
+      if (!sourceApp.empty())
+      {
+        // Create a hash based on source app to differentiate between different applications
+        std::string canonical = sourceApp;
+        unsigned char digest[MD5_DIGEST_LENGTH];
+        MD5((unsigned char*)canonical.c_str(), canonical.length(), digest);
+        
+        std::stringstream hex;
+        hex << std::hex << std::uppercase;
+        for(int i = 0; i < 4; ++i) // Use first 4 bytes for 32-bit hash
+            hex << std::setw(2) << std::setfill('0') << (int)digest[i];
+        
+        filePropertiesHash = hex.str();
+      }
 
       // Derive keys using different patterns based on schemaCE_findings.md
 
@@ -310,6 +335,95 @@ namespace Open3SDCM
 
       // 7. Key based on file properties (EKID=1) (from original patterns)
       derivedKeys.push_back({0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00});
+      
+      // 8. Pi-related patterns (hypothesis: first digits of Pi)
+      // 3.1415926535897932 (first 16 digits of Pi)
+      derivedKeys.push_back({
+          0x31, 0x41, 0x59, 0x26, 0x53, 0x58, 0x97, 0x93, 0x23, 0x84, 0x62, 0x64, 0x33, 0x83, 0x27, 0x95
+      });
+      
+      // 9. Pi-related pattern (3141592653589793 as hex)
+      derivedKeys.push_back({
+          0x31, 0x41, 0x59, 0x26, 0x53, 0x58, 0x97, 0x93, 0x31, 0x41, 0x59, 0x26, 0x53, 0x58, 0x97, 0x93
+      });
+      
+      // 10. Key with EKID XOR Pi pattern
+      {
+          std::vector<unsigned char> derivedKey = baseKey;
+          std::vector<unsigned char> piPattern = {0x31, 0x41, 0x59, 0x26, 0x53, 0x58, 0x97, 0x93, 0x23, 0x84, 0x62, 0x64, 0x33, 0x83, 0x27, 0x95};
+          for (size_t i = 0; i < derivedKey.size(); ++i) {
+              derivedKey[i] ^= piPattern[i % piPattern.size()] ^ static_cast<unsigned char>(ekid);
+          }
+          derivedKeys.push_back(derivedKey);
+      }
+      
+      // 11. Sequential pattern starting from EKID
+      {
+          std::vector<unsigned char> derivedKey(16);
+          for (size_t i = 0; i < derivedKey.size(); ++i) {
+              derivedKey[i] = static_cast<unsigned char>(ekid + i);
+          }
+          derivedKeys.push_back(derivedKey);
+      }
+      
+      // 12. Key with alternating EKID and position
+      {
+          std::vector<unsigned char> derivedKey(16);
+          for (size_t i = 0; i < derivedKey.size(); ++i) {
+              derivedKey[i] = static_cast<unsigned char>(ekid ^ (i * 167)) % 256; // 167 is a prime
+          }
+          derivedKeys.push_back(derivedKey);
+      }
+      
+      // 13. SourceApp-based key derivation
+      if (!filePropertiesHash.empty()) {
+          std::vector<unsigned char> derivedKey = baseKey;
+          uint32_t appHash = std::stoul(filePropertiesHash, nullptr, 16);
+          for (size_t i = 0; i < derivedKey.size(); ++i) {
+              uint8_t appByte = static_cast<uint8_t>((appHash >> (i % 4 * 8)) & 0xFF);
+              derivedKey[i] ^= appByte ^ static_cast<uint8_t>(ekid ^ (i % 256));
+          }
+          derivedKeys.push_back(derivedKey);
+      }
+      
+      // 14. Complex pattern: EKID + Pi + SourceApp hash
+      if (!filePropertiesHash.empty()) {
+          std::vector<unsigned char> derivedKey(16);
+          uint32_t appHash = std::stoul(filePropertiesHash, nullptr, 16);
+          std::vector<unsigned char> piPattern = {0x31, 0x41, 0x59, 0x26, 0x53, 0x58, 0x97, 0x93, 0x23, 0x84, 0x62, 0x64, 0x33, 0x83, 0x27, 0x95};
+          for (size_t i = 0; i < derivedKey.size(); ++i) {
+              uint8_t appByte = static_cast<uint8_t>((appHash >> (i % 4 * 8)) & 0xFF);
+              uint8_t piByte = piPattern[i % piPattern.size()];
+              derivedKey[i] = static_cast<uint8_t>(ekid + appByte + piByte + i);
+          }
+          derivedKeys.push_back(derivedKey);
+      }
+      
+      // 15. Fibonacci-based pattern (another mathematical constant hypothesis)
+      {
+          std::vector<unsigned char> fibPattern = {
+              0x01, 0x01, 0x02, 0x03, 0x05, 0x08, 0x0D, 0x15,
+              0x22, 0x37, 0x59, 0x90, 0xE9, 0x79, 0x62, 0xDF
+          }; // First 16 Fibonacci numbers mod 256
+          std::vector<unsigned char> derivedKey(16);
+          for (size_t i = 0; i < derivedKey.size(); ++i) {
+              derivedKey[i] = static_cast<uint8_t>(fibPattern[i] ^ ekid ^ (i * 167));
+          }
+          derivedKeys.push_back(derivedKey);
+      }
+      
+      // 16. Golden ratio-based pattern (φ = 1.618033988749895)
+      {
+          std::vector<unsigned char> goldenPattern = {
+              0x31, 0x36, 0x31, 0x38, 0x30, 0x33, 0x33, 0x39,
+              0x38, 0x38, 0x37, 0x34, 0x39, 0x38, 0x39, 0x35
+          }; // φ digits as ASCII
+          std::vector<unsigned char> derivedKey(16);
+          for (size_t i = 0; i < derivedKey.size(); ++i) {
+              derivedKey[i] = static_cast<uint8_t>(goldenPattern[i] ^ (ekid * (i + 1)));
+          }
+          derivedKeys.push_back(derivedKey);
+      }
 
       return derivedKeys;
     }
