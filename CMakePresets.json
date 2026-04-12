@@ -31,6 +31,16 @@
       "toolchainFile": "$env{TOOLCHAINFILE}"
     },
     {
+      "name": "ninja-sanitizers-vcpkg",
+      "displayName": "Ninja Configure with Sanitizers (ASAN+UBSAN+Debug)",
+      "description": "Debug build with address and undefined-behaviour sanitizers, clang-tidy and cppcheck",
+      "inherits": "ninja-release-vcpkg",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "FEATURE_TESTS": { "type": "BOOL", "value": "ON" }
+      }
+    },
+    {
       "name": "ninja-multi-vcpkg",
       "displayName": "Ninja Multi-Config Configure Settings",
       "description": "Configure with vcpkg toolchain",
@@ -69,6 +79,12 @@
       "description":  "Build Release with Ninja with vcpkg"
     },
     {
+      "name": "ninja-sanitizers-vcpkg",
+      "configurePreset": "ninja-sanitizers-vcpkg",
+      "displayName": "Build Debug with Ninja with sanitizers",
+      "description": "Build Debug with ASAN+UBSAN via Ninja with vcpkg"
+    },
+    {
       "name": "ninja-multi-vcpkg",
       "configurePreset": "ninja-multi-vcpkg",
       "displayName": "Build ninja-multi-vcpkg",
@@ -88,6 +104,10 @@
     }
   ],
   "testPresets": [
+    {
+      "name": "ninja-sanitizers-vcpkg",
+      "configurePreset": "ninja-sanitizers-vcpkg"
+    },
     {
       "name": "ninja-release-vcpkg",
       "configurePreset": "ninja-release-vcpkg"
