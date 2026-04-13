@@ -7,11 +7,12 @@ An open-source C++ library and CLI tool for converting 3Shape DCM files to stand
 The project aims to provide a comprehensive solution for reading and converting 3Shape DCM files:
 
 1. ✅ **Read and extract mesh geometry** (vertices and triangles) from DCM files - **Done** 
-   - Supports schemas CA, CB, CC, and CE (encrypted)
-2. ✅ **Convert to STL, PLY, OBJ** - **Done** (using Assimp)
-3. 🚧 **Read mesh colors** - To do
-4. 🚧 **Read UV mapping and textures** - To do
-5. 🚧 **Read extra curves** - To do
+   - Supports schemas CA, CB, CC
+2.  🚧 Not support yet schema CE (encrypted). WIP
+3. ✅ **Convert to STL, PLY, OBJ** - **Done** (using Assimp)
+4. 🚧 **Read mesh colors** - To do
+5. 🚧 **Read UV mapping and textures** - To do
+6. 🚧 **Read extra curves** - To do
 
 ### Not part of the goals (at least initially)
 * Write DCM files
