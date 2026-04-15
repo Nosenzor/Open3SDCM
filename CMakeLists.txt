@@ -158,5 +158,7 @@ endif()
 
 add_subdirectory(Lib)
 add_subdirectory(CLI)
+
+include(CTest)
 add_subdirectory(TestTools)
 
