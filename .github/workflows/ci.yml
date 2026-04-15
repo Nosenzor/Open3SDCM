@@ -82,6 +82,9 @@ jobs:
           VCPKG_FORCE_SYSTEM_BINARIES: ${{ runner.os == 'Linux' && '1' || '' }}
           SCCACHE_GHA_ENABLED: ${{ runner.os == 'Windows' && 'true' || '' }}
 
+      - name: Run tests
+        run: ctest --preset ninja-release-vcpkg --output-on-failure
+
   sanitizers:
     name: Sanitizers / Linux
     runs-on: ubuntu-latest
