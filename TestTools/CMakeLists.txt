@@ -49,44 +49,44 @@ set_target_properties(MeshComparisonTest PROPERTIES
 if(BUILD_TESTING)
   # CMAKE_SOURCE_DIR uses forward slashes on all platforms (CMake convention),
   # so passing it as a string literal is safe without backslash escaping.
-  add_executable(DtsBatchTest
-      src/DtsBatchTest.cpp
+  add_executable(RealWorldTest
+      src/RealWorldTest.cpp
   )
 
-  target_compile_definitions(DtsBatchTest
+  target_compile_definitions(RealWorldTest
       PRIVATE "TEST_DATA_DIR=\"${CMAKE_SOURCE_DIR}/TestData\""
   )
 
-  target_link_libraries(DtsBatchTest
+  target_link_libraries(RealWorldTest
       PRIVATE
           Open3SDCMLib
           fmt::fmt
   )
 
-  target_include_directories(DtsBatchTest
+  target_include_directories(RealWorldTest
       PRIVATE
           ${CMAKE_SOURCE_DIR}/Lib/src
   )
 
-  target_compile_features(DtsBatchTest PRIVATE cxx_std_20)
+  target_compile_features(RealWorldTest PRIVATE cxx_std_20)
 
   if(MSVC)
-    target_compile_options(DtsBatchTest PRIVATE "/utf-8")
+    target_compile_options(RealWorldTest PRIVATE "/utf-8")
   endif()
 
-  set_target_properties(DtsBatchTest PROPERTIES
+  set_target_properties(RealWorldTest PROPERTIES
       RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
   )
 
-  add_test(NAME DtsBatch_scan_040
-      COMMAND DtsBatchTest --run_test=DtsBatchConversion/ConvertScan040 --log_level=message)
-  add_test(NAME DtsBatch_scan_039
-      COMMAND DtsBatchTest --run_test=DtsBatchConversion/ConvertScan039 --log_level=message)
-  add_test(NAME DtsBatch_scan_012
-      COMMAND DtsBatchTest --run_test=DtsBatchConversion/ConvertScan012 --log_level=message)
-  add_test(NAME DtsBatch_scan_019
-      COMMAND DtsBatchTest --run_test=DtsBatchConversion/ConvertScan019 --log_level=message)
-  add_test(NAME DtsBatch_scan_045
-      COMMAND DtsBatchTest --run_test=DtsBatchConversion/ConvertScan045 --log_level=message)
+  add_test(NAME RealWorld_scan_040
+      COMMAND RealWorldTest --run_test=RealWorldConversion/ConvertScan040 --log_level=message)
+  add_test(NAME RealWorld_scan_039
+      COMMAND RealWorldTest --run_test=RealWorldConversion/ConvertScan039 --log_level=message)
+  add_test(NAME RealWorld_scan_012
+      COMMAND RealWorldTest --run_test=RealWorldConversion/ConvertScan012 --log_level=message)
+  add_test(NAME RealWorld_scan_019
+      COMMAND RealWorldTest --run_test=RealWorldConversion/ConvertScan019 --log_level=message)
+  add_test(NAME RealWorld_scan_045
+      COMMAND RealWorldTest --run_test=RealWorldConversion/ConvertScan045 --log_level=message)
 endif()
 

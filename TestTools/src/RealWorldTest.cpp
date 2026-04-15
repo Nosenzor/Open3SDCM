@@ -4,7 +4,7 @@
 //   - geometry integrity (all vertex floats finite, all indices in range)
 //   - successful PLY export with non-empty output file
 
-#define BOOST_TEST_MODULE DtsBatchConversionTest
+#define BOOST_TEST_MODULE RealWorldConversionTest
 #include <boost/test/included/unit_test.hpp>
 
 #include "ParseDcm.h"
@@ -129,7 +129,7 @@ static void runConversionTest(const ScanSpec& spec)
 // ---------------------------------------------------------------------------
 // Test suite — one case per scan for independent CTest entries
 // ---------------------------------------------------------------------------
-BOOST_AUTO_TEST_SUITE(DtsBatchConversion)
+BOOST_AUTO_TEST_SUITE(RealWorldConversion)
 
 BOOST_AUTO_TEST_CASE(ConvertScan040) { runConversionTest(k_Scans[0]); }
 BOOST_AUTO_TEST_CASE(ConvertScan039) { runConversionTest(k_Scans[1]); }
