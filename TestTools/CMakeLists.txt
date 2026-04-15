@@ -42,7 +42,7 @@ set_target_properties(MeshComparisonTest PROPERTIES
 )
 
 # ---------------------------------------------------------------------------
-# DTS batch conversion tests (Boost.Test + CTest)
+# Real-world scan batch conversion tests (Boost.Test + CTest)
 # Each of the 5 real-world dental scans is registered as an independent CTest
 # entry so that failures are reported per-scan in CI output.
 # ---------------------------------------------------------------------------

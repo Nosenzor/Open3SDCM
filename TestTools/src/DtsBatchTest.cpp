@@ -1,5 +1,5 @@
-// DTS real-world scan batch conversion test.
-// Parses each DCM in TestData/DTS/ and exports to PLY, verifying:
+// Real-world scan batch conversion test.
+// Parses each DCM in TestData/real-world/ and exports to PLY, verifying:
 //   - exact vertex/face counts (regression guard for decryption + facet decoding)
 //   - geometry integrity (all vertex floats finite, all indices in range)
 //   - successful PLY export with non-empty output file
@@ -21,7 +21,7 @@ namespace fs = std::filesystem;
 #endif
 
 // ---------------------------------------------------------------------------
-// Known-good counts — verified against a clean parse of the DTS batch.
+// Known-good counts — verified against a clean parse of the real-world batch.
 // Divergence here immediately flags a decryption or facet-decode regression.
 // ---------------------------------------------------------------------------
 struct ScanSpec
@@ -48,7 +48,7 @@ struct TempOutputDir
   fs::path path;
 
   explicit TempOutputDir(const char* scanName)
-    : path(fs::temp_directory_path() / "Open3SDCM_DTS_test" / scanName)
+    : path(fs::temp_directory_path() / "Open3SDCM_real_world_test" / scanName)
   {
     fs::remove_all(path);          // clear any stale output from a previous run
     fs::create_directories(path);
@@ -90,7 +90,7 @@ static bool allIndicesInRange(const std::vector<Open3SDCM::Triangle>& triangles,
 // ---------------------------------------------------------------------------
 static void runConversionTest(const ScanSpec& spec)
 {
-  const fs::path dcm = fs::path(TEST_DATA_DIR) / "DTS" / spec.filename;
+  const fs::path dcm = fs::path(TEST_DATA_DIR) / "real-world" / spec.filename;
 
   BOOST_TEST_MESSAGE("DCM: " << dcm.string());
   BOOST_REQUIRE_MESSAGE(fs::exists(dcm), "DCM file not found: " << dcm.string());
