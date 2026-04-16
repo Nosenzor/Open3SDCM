@@ -53,7 +53,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
   file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" ProjectVersion)
   string(STRIP "${ProjectVersion}" ProjectVersion)
 else()
-  set(ProjectVersion "0.1.0")
+  set(ProjectVersion "1.0.0")
 endif()
 project(Open3SDCM LANGUAGES CXX C VERSION ${ProjectVersion})
 

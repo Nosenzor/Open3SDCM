@@ -1,180 +1,193 @@
-name: Release
+name: Build and Publish Release
 
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to release (e.g., v0.1.1)'
-        required: true
-        default: 'v0.1.1'
 
 permissions:
-  contents: write
+  contents: read
 
-env:
-  VCPKG_DEFAULT_TRIPLET_WINDOWS: x64-windows
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref_name || github.run_id }}
+  cancel-in-progress: false
 
 jobs:
-  build-linux:
-    name: Build Linux
+  prepare:
+    name: Prepare release metadata
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release_meta.outputs.tag }}
+      version: ${{ steps.release_meta.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          fetch-depth: 1
+
+      - name: Resolve release version
+        id: release_meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(tr -d '[:space:]' < VERSION)"
+          tag="v${version}"
+
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid VERSION value: ${version}" >&2
+            exit 1
+          fi
+
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_name }}" != "${tag}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match VERSION ${version}" >&2
+            exit 1
+          fi
+
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build / ${{ matrix.name }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    env:
+      VCPKG_FORCE_SYSTEM_BINARIES: ${{ runner.os == 'Linux' && '1' || '' }}
+      VCPKG_DEFAULT_TRIPLET: ${{ runner.os == 'Windows' && 'x64-windows' || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+            asset_suffix: linux
+            executable_name: Open3SDCMCLI
+            artifact_name: release-linux
+            archive_extension: tar.gz
+            archive_format: gnutar
+          - name: macOS
+            os: macos-latest
+            asset_suffix: macos
+            executable_name: Open3SDCMCLI
+            artifact_name: release-macos
+            archive_extension: tar.gz
+            archive_format: gnutar
+          - name: Windows
+            os: windows-latest
+            asset_suffix: windows
+            executable_name: Open3SDCMCLI.exe
+            artifact_name: release-windows
+            archive_extension: zip
+            archive_format: zip
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
           submodules: true
 
       - name: Install Ninja
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build
-          which ninja
-          ninja --version
-
-      - name: Setup ccache
-        uses: Chocobo1/setup-ccache-action@v1.4.3
-
-      - uses: lukka/get-cmake@latest
-
-      - name: Restore artifacts, or setup vcpkg
-        uses: lukka/run-vcpkg@v11
-        id: runvcpkg
-        with:
-          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
-          vcpkgJsonGlob: '**/vcpkg.json'
-        env:
-          VCPKG_FORCE_SYSTEM_BINARIES: 1
-
-      - name: Run CMake+vcpkg+Ninja
-        uses: lukka/run-cmake@v10.7
-        id: runcmake
-        with:
-          cmakeListsTxtPath: '${{ github.workspace }}/CMakeLists.txt'
-          configurePreset: 'ninja-release-vcpkg'
-          buildPreset: 'ninja-release-vcpkg'
-        env:
-          VCPKG_FORCE_SYSTEM_BINARIES: 1
-
-      - name: Package Binary
-        run: |
-          mkdir -p release
-          cp builds/ninja-release-vcpkg/bin/Open3SDCMCLI release/
-          cd release
-          tar -czvf ../Open3SDCM-linux.tar.gz *
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Open3SDCM-linux
-          path: Open3SDCM-linux.tar.gz
-
-  build-macos:
-    name: Build macOS
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - name: Setup ccache
-        uses: Chocobo1/setup-ccache-action@v1.4.3
-
-      - uses: lukka/get-cmake@latest
-
-      - name: Restore artifacts, or setup vcpkg
-        uses: lukka/run-vcpkg@v11
-        id: runvcpkg
-        with:
-          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
-          vcpkgJsonGlob: '**/vcpkg.json'
-
-      - name: Run CMake+vcpkg+Ninja
-        uses: lukka/run-cmake@v10.7
-        id: runcmake
-        with:
-          cmakeListsTxtPath: '${{ github.workspace }}/CMakeLists.txt'
-          configurePreset: 'ninja-release-vcpkg'
-          buildPreset: 'ninja-release-vcpkg'
-
-      - name: Package Binary
-        run: |
-          mkdir -p release
-          cp builds/ninja-release-vcpkg/bin/Open3SDCMCLI release/
-          cd release
-          tar -czvf ../Open3SDCM-macos.tar.gz *
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Open3SDCM-macos
-          path: Open3SDCM-macos.tar.gz
-
-  build-windows:
-    name: Build Windows
-    runs-on: windows-latest
-    env:
-      VCPKG_DEFAULT_TRIPLET: x64-windows
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
-
-      - uses: lukka/get-cmake@latest
-
-      - name: Restore artifacts, or setup vcpkg
-        uses: lukka/run-vcpkg@v11
-        id: runvcpkg
-        with:
-          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
-          vcpkgJsonGlob: '**/vcpkg.json'
-        env:
-          SCCACHE_GHA_ENABLED: "true"
-
-      - name: Run CMake+vcpkg+Ninja
-        uses: lukka/run-cmake@v10.7
-        env:
-          SCCACHE_GHA_ENABLED: "true"
-        id: runcmake
-        with:
-          cmakeListsTxtPath: '${{ github.workspace }}/CMakeLists.txt'
-          configurePreset: 'ninja-release-vcpkg'
-          buildPreset: 'ninja-release-vcpkg'
-
-      - name: Package Binary
+        if: runner.os != 'Windows'
         shell: bash
         run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            sudo apt-get update
+            sudo apt-get install -y ninja-build
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            brew install ninja
+          fi
+
+      - name: Install Ninja on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install ninja --yes
+
+      - name: Show tool versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --version
+          ninja --version
+
+      - name: Configure release build
+        run: cmake --preset ninja-release-vcpkg
+
+      - name: Build release binaries
+        run: cmake --build --preset ninja-release-vcpkg --parallel
+
+      - name: Package release asset
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          archive="Open3SDCM-${{ needs.prepare.outputs.version }}-${{ matrix.asset_suffix }}.${{ matrix.archive_extension }}"
           mkdir -p release
-          cp builds/ninja-release-vcpkg/bin/Open3SDCMCLI.exe release/
-          cd release
-          7z a ../Open3SDCM-windows.zip *
+          cp "builds/ninja-release-vcpkg/bin/${{ matrix.executable_name }}" "release/${{ matrix.executable_name }}"
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+          pushd release >/dev/null
+          if [ "${{ matrix.archive_format }}" = "zip" ]; then
+            cmake -E tar cf "../${archive}" --format=zip -- "${{ matrix.executable_name }}"
+          else
+            cmake -E tar cfvz "../${archive}" --format=gnutar -- "${{ matrix.executable_name }}"
+          fi
+          popd >/dev/null
+
+          echo "archive=${archive}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: Open3SDCM-windows
-          path: Open3SDCM-windows.zip
+          name: ${{ matrix.artifact_name }}
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
 
-  create-release:
-    name: Create Release
-    needs: [build-linux, build-macos, build-windows]
+  publish:
+    name: Publish release
+    needs: [prepare, build]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
     steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - name: Download Linux artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          path: artifacts
+          name: release-linux
+          path: dist
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
+      - name: Download macOS artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          tag_name: ${{ github.event.inputs.version || github.ref_name }}
-          files: |
-            artifacts/Open3SDCM-linux/Open3SDCM-linux.tar.gz
-            artifacts/Open3SDCM-macos/Open3SDCM-macos.tar.gz
-            artifacts/Open3SDCM-windows/Open3SDCM-windows.zip
+          name: release-macos
+          path: dist
 
+      - name: Download Windows artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-windows
+          path: dist
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${{ needs.prepare.outputs.tag }}"
+          title="Open3SDCM ${tag}"
+
+          ls -lah dist
+
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release upload "${tag}" dist/* --clobber
+          else
+            gh release create "${tag}" dist/* \
+              --title "${title}" \
+              --generate-notes \
+              --target "${GITHUB_SHA}"
+          fi
