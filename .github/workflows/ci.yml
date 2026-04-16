@@ -8,11 +8,6 @@ on:
       - '**/BenchmarkResults/**'
       - '**/FunctionTests/**'
   pull_request:
-    branches: [main]
-    paths-ignore:
-      - '**/*.md'
-      - '**/BenchmarkResults/**'
-      - '**/FunctionTests/**'
   workflow_dispatch:
 
 jobs:
@@ -76,11 +71,14 @@ jobs:
         uses: lukka/run-cmake@v10.7
         with:
           cmakeListsTxtPath: '${{ github.workspace }}/CMakeLists.txt'
-          configurePreset: ninja-release-vcpkg
-          buildPreset: ninja-release-vcpkg
+          configurePreset: ninja-release-vcpkg-tests
+          buildPreset: ninja-release-vcpkg-tests
         env:
           VCPKG_FORCE_SYSTEM_BINARIES: ${{ runner.os == 'Linux' && '1' || '' }}
           SCCACHE_GHA_ENABLED: ${{ runner.os == 'Windows' && 'true' || '' }}
+
+      - name: Run tests
+        run: ctest --preset ninja-release-vcpkg-tests --output-on-failure
 
   sanitizers:
     name: Sanitizers / Linux
