@@ -8,7 +8,7 @@ The project aims to provide a comprehensive solution for reading and converting 
 
 1. ✅ **Read and extract mesh geometry** (vertices and triangles) from DCM files - **Done** 
    - Supports schemas CA, CB, CC
-2.  🚧 Not support yet schema CE (encrypted). WIP
+2.  ✅ Now support schema CE (encrypted) !!!. Since v1.0.0.
 3. ✅ **Convert to STL, PLY, OBJ** - **Done** (using Assimp)
 4. 🚧 **Read mesh colors** - To do
 5. 🚧 **Read UV mapping and textures** - To do
