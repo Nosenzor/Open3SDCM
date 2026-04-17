@@ -15,11 +15,28 @@
       "toolchainFile": "./vcpkg/scripts/buildsystems/vcpkg.cmake",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
+        "Open3SDCM_BUILD_TESTS": {
+          "type": "BOOL",
+          "value": "OFF"
+        },
         "CMAKE_TOOLCHAIN_FILE": {
           "type": "FILEPATH",
           "value": "./vcpkg/scripts/buildsystems/vcpkg.cmake"
         },
         "CMAKE_MAKE_PROGRAM": "ninja"
+      }
+    },
+    {
+      "name": "ninja-release-vcpkg-tests",
+      "displayName": "Ninja Configure Settings (Release with vcpkg + tests)",
+      "description": "Release build with vcpkg and test targets enabled",
+      "inherits": "ninja-release-vcpkg",
+      "binaryDir": "${sourceDir}/builds/${presetName}",
+      "cacheVariables": {
+        "Open3SDCM_BUILD_TESTS": {
+          "type": "BOOL",
+          "value": "ON"
+        }
       }
     },
     {
@@ -37,6 +54,7 @@
       "inherits": "ninja-release-vcpkg",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
+        "Open3SDCM_BUILD_TESTS": { "type": "BOOL", "value": "ON" },
         "FEATURE_TESTS": { "type": "BOOL", "value": "ON" }
       }
     },
@@ -79,6 +97,12 @@
       "description":  "Build Release with Ninja with vcpkg"
     },
     {
+      "name": "ninja-release-vcpkg-tests",
+      "configurePreset": "ninja-release-vcpkg-tests",
+      "displayName": "Build Release with Ninja with vcpkg and tests",
+      "description": "Build Release with Ninja with vcpkg and test targets"
+    },
+    {
       "name": "ninja-sanitizers-vcpkg",
       "configurePreset": "ninja-sanitizers-vcpkg",
       "displayName": "Build Debug with Ninja with sanitizers",
@@ -107,6 +131,10 @@
     {
       "name": "ninja-sanitizers-vcpkg",
       "configurePreset": "ninja-sanitizers-vcpkg"
+    },
+    {
+      "name": "ninja-release-vcpkg-tests",
+      "configurePreset": "ninja-release-vcpkg-tests"
     },
     {
       "name": "ninja-release-vcpkg",

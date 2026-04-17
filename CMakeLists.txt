@@ -60,7 +60,7 @@ project(Open3SDCM LANGUAGES CXX C VERSION ${ProjectVersion})
 
 
 # Build tests and tutorials
-option(Open3SDCM_BUILD_TESTS      "Build All Tests"               ON)
+option(Open3SDCM_BUILD_TESTS      "Build All Tests"               OFF)
 option(Open3SDCM_BUILD_BENCH      "Build Benchmark"               OFF)
 
 message("BUILD TYPE : " ${CMAKE_BUILD_TYPE} " USING :" ${CMAKE_CXX_COMPILER_ID} " version : " ${CMAKE_CXX_COMPILER_VERSION})
@@ -158,4 +158,15 @@ endif()
 
 add_subdirectory(Lib)
 add_subdirectory(CLI)
-add_subdirectory(TestTools)
+
+set(BUILD_TESTING ${Open3SDCM_BUILD_TESTS} CACHE BOOL "Enable CTest-based tests" FORCE)
+include(CTest)
+if(Open3SDCM_BUILD_TESTS)
+  add_subdirectory(TestTools)
+else()
+  # Reconfiguring an existing build tree from tests=ON to tests=OFF can leave
+  # stale CTest metadata behind; remove it so ctest reflects the current config.
+  file(REMOVE "${CMAKE_BINARY_DIR}/CTestTestfile.cmake")
+  file(REMOVE "${CMAKE_BINARY_DIR}/TestTools/CTestTestfile.cmake")
+  file(REMOVE_RECURSE "${CMAKE_BINARY_DIR}/Testing")
+endif()

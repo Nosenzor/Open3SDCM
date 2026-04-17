@@ -186,10 +186,10 @@ namespace Open3SDCM
     {
         if (schema != "CE") return data;
 
-        // Base key
+        // Base key (extracted from dcm2stl reference implementation)
         std::vector<unsigned char> key = {
-            0x1C, 0x8D, 0x10, 0xB1, 0xF7, 0xF5, 0xB8, 0xFE,
-            0x89, 0x01, 0x60, 0xFB, 0xE4, 0x53, 0x60, 0xAC
+            0x34, 0x90, 0x02, 0x93, 0x58, 0x2F, 0x49, 0x94,
+            0x76, 0x02, 0x19, 0xDF, 0x3B, 0x56, 0x44, 0x1C
         };
 
         // Check EKID
@@ -291,10 +291,8 @@ namespace Open3SDCM
                                               ((adler & 0x000000FF) << 24);
 
                       if (swappedAdler != checkValue) {
-                          fmt::print("Error: Checksum mismatch! Expected: {}, Calculated: {} (Swapped: {})\n", checkValue, adler, swappedAdler);
-                          fmt::print("Error: Decryption key might be incorrect.\n");
-                      } else {
-                          fmt::print("Checksum verified. Key is correct.\n");
+                          std::cerr << "Error: CE schema checksum mismatch! Expected: " << checkValue
+                                    << ", got: " << swappedAdler << ". Decryption key may be incorrect." << std::endl;
                       }
                   }
               }
@@ -311,14 +309,6 @@ namespace Open3SDCM
 
               std::vector<float> floatData(floatPtr, floatPtr + floatCount);
 
-              // Debug: Print first few vertices
-              if (floatData.size() >= 9) {
-                  std::cout << "First 3 vertices:" << std::endl;
-                  for (int i = 0; i < 3; ++i) {
-                      std::cout << "  v" << i << ": (" << floatData[i*3] << ", " << floatData[i*3+1] << ", " << floatData[i*3+2] << ")" << std::endl;
-                  }
-              }
-
               return floatData;
             }
           }
@@ -334,192 +324,233 @@ namespace Open3SDCM
 
     std::vector<Open3SDCM::Triangle> InterpretFacetsBuffer(const std::vector<char>& rawData, size_t expectedFaceCount)
     {
-      constexpr uint8_t FACET_COMMAND_MASK = 0x0F;
-
-      std::vector<Open3SDCM::Triangle> Triangles;
-      Triangles.reserve(expectedFaceCount);
-
-      std::deque<std::pair<size_t, size_t>> edgeQueue;
-      size_t commandOffset = 0;
-      size_t vertexOffset = 0;
-
-      const auto requireBytes = [&](size_t bytes) -> bool {
-        if (commandOffset + bytes > rawData.size())
-        {
-          std::cerr << "Warning: Facet buffer underrun while reading geometry data" << std::endl;
-          return false;
-        }
-        return true;
+      // Edge in the circular edge list
+      struct Edge
+      {
+        size_t start;
+        size_t end;
       };
 
-      // Helper lambda to append a face
-      auto appendFace = [&Triangles](size_t v1, size_t v2, size_t v3) {
-        Triangles.push_back({v1, v2, v3});
-        // Debug: log first few faces
-        if (Triangles.size() <= 10) {
-          std::cout << "Face " << (Triangles.size() - 1) << ": (" << v1 << ", " << v2 << ", " << v3 << ")" << std::endl;
-        }
-      };
+      // Run the full decode with a given payload width for opcodes 5 and 7.
+      // Returns the produced triangles so we can retry with a different mode.
+      auto decode = [&](bool use32BitPayload) -> std::vector<Open3SDCM::Triangle> {
+        std::vector<Open3SDCM::Triangle> triangles;
+        triangles.reserve(expectedFaceCount);
 
-      // Helper to read command
-      auto readOp = [&rawData, &commandOffset, &requireBytes]() -> uint8_t {
-        if (!requireBytes(1))
-        {
-          return 0;
-        }
-        uint8_t result = static_cast<uint8_t>(rawData[commandOffset]) & FACET_COMMAND_MASK;
-        commandOffset++;
-        return result;
-      };
+        std::vector<Edge> edgeList;
+        size_t currentEdgeIdx  = 0;
+        size_t globalVertexPtr = 0;
+        size_t offset          = 0;
 
-      // Helper to read int16 (note: uses 4-byte alignment/padding)
-      // Returns absolute vertex index (handles negative indices as relative to vertex_offset)
-      auto read16 = [&rawData, &commandOffset, &vertexOffset]() -> size_t {
-        int16_t result;
-        std::memcpy(&result, &rawData[commandOffset], sizeof(int16_t));
-        commandOffset += 4;  // 4-byte alignment (2 bytes data + 2 bytes padding)
-        // Handle negative indices as relative to vertex_offset
-        if (result < 0) {
-          // Use signed arithmetic to avoid underflow: vertexOffset - abs(result)
-          int64_t signedOffset = static_cast<int64_t>(vertexOffset);
-          int64_t signedResult = static_cast<int64_t>(result);
-          int64_t absoluteIndex = signedOffset + signedResult;  // result is negative
-          if (absoluteIndex < 0) {
-            std::cerr << "ERROR: Negative vertex index computed: offset=" << vertexOffset
-                      << ", result=" << result << ", absolute=" << absoluteIndex << std::endl;
-            return 0;
-          }
-          return static_cast<size_t>(absoluteIndex);
-        }
-        return static_cast<size_t>(result);
-      };
+        // ── helpers ──────────────────────────────────────────────────────────
 
-      // Helper to read int32
-      // Returns absolute vertex index (handles negative indices as relative to vertex_offset)
-      auto read32 = [&rawData, &commandOffset, &vertexOffset]() -> size_t {
-        int32_t result;
-        std::memcpy(&result, &rawData[commandOffset], sizeof(int32_t));
-        commandOffset += sizeof(int32_t);
-        // Handle negative indices as relative to vertex_offset
-        if (result < 0) {
-          // Use signed arithmetic to avoid underflow: vertexOffset - abs(result)
-          int64_t signedOffset = static_cast<int64_t>(vertexOffset);
-          int64_t signedResult = static_cast<int64_t>(result);
-          int64_t absoluteIndex = signedOffset + signedResult;  // result is negative
-          if (absoluteIndex < 0) {
-            std::cerr << "ERROR: Negative vertex index computed: offset=" << vertexOffset
-                      << ", result=" << result << ", absolute=" << absoluteIndex << std::endl;
-            return 0;
-          }
-          return static_cast<size_t>(absoluteIndex);
-        }
-        return static_cast<size_t>(result);
-      };
+        auto requireBytes = [&](size_t n) -> bool {
+          return offset + n <= rawData.size();
+        };
 
-      // Helper for restart operation
-      auto restart = [&](size_t vid0, size_t vid1, size_t vid2) {
-        edgeQueue.clear();
-        appendFace(vid0, vid1, vid2);
-        edgeQueue.push_back({vid0, vid1});
-        edgeQueue.push_back({vid1, vid2});
-        edgeQueue.push_back({vid2, vid0});  // Fixed: was (vid2, vid1), should close the triangle with vid0
-      };
+        auto readUint16 = [&]() -> size_t {
+          uint16_t v = 0;
+          std::memcpy(&v, &rawData[offset], sizeof(v));
+          offset += sizeof(v);
+          return static_cast<size_t>(v);
+        };
 
-      // Helper for absolute operation
-      auto absolute = [&](size_t index) {
-        auto current = edgeQueue.front();
-        edgeQueue.pop_front();
-        appendFace(current.first, index, current.second);
-        edgeQueue.push_back({current.first, index});
-        edgeQueue.push_back({index, current.second});
-      };
+        auto readUint32 = [&]() -> size_t {
+          uint32_t v = 0;
+          std::memcpy(&v, &rawData[offset], sizeof(v));
+          offset += sizeof(v);
+          return static_cast<size_t>(v);
+        };
 
-      // Process all commands
-      while (commandOffset < rawData.size()) {
-        uint8_t command = readOp();
+        // Read one index according to the current payload mode
+        auto readIdx = [&]() -> size_t {
+          return use32BitPayload ? readUint32() : readUint16();
+        };
 
-        switch (command) {
-          case 0: { // op0
-            auto current = edgeQueue.front();
-            edgeQueue.pop_front();
-            appendFace(current.first, vertexOffset, current.second);
-            edgeQueue.push_back({current.first, vertexOffset});
-            edgeQueue.push_back({vertexOffset, current.second});
-            vertexOffset++;
-            break;
-          }
-          case 1: { // op1
-            auto current = edgeQueue.front();
-            edgeQueue.pop_front();
-            auto previous = edgeQueue.back();
-            edgeQueue.pop_back();
-            appendFace(current.first, previous.first, current.second);
-            edgeQueue.push_back({previous.first, current.second});
-            break;
-          }
-          case 2: { // op2
-            auto current = edgeQueue.front();
-            edgeQueue.pop_front();
-            auto next = edgeQueue.front();
-            edgeQueue.pop_front();
-            appendFace(current.first, next.second, current.second);
-            edgeQueue.push_back({current.first, next.second});
-            break;
-          }
-          case 3: { // op3 - rotate
-            auto front = edgeQueue.front();
-            edgeQueue.pop_front();
-            edgeQueue.push_back(front);
-            break;
-          }
-          case 4: { // op4
-            restart(vertexOffset, vertexOffset + 1, vertexOffset + 2);
-            vertexOffset += 3;
-            break;
-          }
-          case 5: { // op5
-            restart(read16(), read16(), read16());
-            break;
-          }
-          case 6: { // op6
-            restart(read32(), read32(), read32());
-            break;
-          }
-          case 7: { // op7
-            absolute(read16());
-            break;
-          }
-          case 8: { // op8
-            absolute(read32());
-            break;
-          }
-          case 9: { // op9
-            auto current = edgeQueue.front();
-            edgeQueue.pop_front();
-            if (edgeQueue.size() > 1) {
-              if (edgeQueue.back().first == edgeQueue.front().first) {
-                edgeQueue.pop_back();
-              } else if (edgeQueue.back().second == current.first &&
-                         edgeQueue.back().first == current.second) {
-                edgeQueue.pop_back();
-              } else {
-                edgeQueue.back().second = edgeQueue.front().second;
-              }
+        auto advanceEdgePointer = [&](size_t n = 1) {
+          if (!edgeList.empty())
+            currentEdgeIdx = (currentEdgeIdx + n) % edgeList.size();
+        };
+
+        auto createRestartFace = [&](size_t v0, size_t v1, size_t v2) {
+          triangles.push_back({v0, v1, v2});
+          edgeList       = {{v0, v1}, {v1, v2}, {v2, v0}};
+          currentEdgeIdx = 0;
+        };
+
+        auto extendCurrentEdge = [&](size_t v) {
+          if (edgeList.empty())
+            return;
+          Edge curr = edgeList[currentEdgeIdx];
+          triangles.push_back({v, curr.end, curr.start});
+          edgeList.erase(edgeList.begin() + static_cast<std::ptrdiff_t>(currentEdgeIdx));
+          edgeList.insert(edgeList.begin() + static_cast<std::ptrdiff_t>(currentEdgeIdx),
+                          Edge{v, curr.end});
+          edgeList.insert(edgeList.begin() + static_cast<std::ptrdiff_t>(currentEdgeIdx),
+                          Edge{curr.start, v});
+        };
+
+        auto handlePrevious = [&]() {
+          if (edgeList.size() < 2)
+            return;
+          const size_t n       = edgeList.size();
+          const size_t prevIdx = (currentEdgeIdx + n - 1) % n;
+          const size_t currIdx = currentEdgeIdx;
+
+          Edge prevEdge = edgeList[prevIdx];
+          Edge currEdge = edgeList[currIdx];
+          triangles.push_back({currEdge.start, prevEdge.start, currEdge.end});
+
+          Edge newEdge             = {prevEdge.start, currEdge.end};
+          const size_t highIdx     = std::max(currIdx, prevIdx);
+          const size_t lowIdx      = std::min(currIdx, prevIdx);
+          edgeList.erase(edgeList.begin() + static_cast<std::ptrdiff_t>(highIdx));
+          edgeList.erase(edgeList.begin() + static_cast<std::ptrdiff_t>(lowIdx));
+          edgeList.insert(edgeList.begin() + static_cast<std::ptrdiff_t>(lowIdx), newEdge);
+          currentEdgeIdx = (lowIdx + 1) % edgeList.size();
+        };
+
+        auto handleNext = [&]() {
+          if (edgeList.size() < 2)
+            return;
+          const size_t currIdx = currentEdgeIdx;
+          const size_t nextIdx = (currIdx + 1) % edgeList.size();
+
+          Edge currEdge = edgeList[currIdx];
+          Edge nextEdge = edgeList[nextIdx];
+          triangles.push_back({currEdge.start, nextEdge.end, currEdge.end});
+
+          Edge newEdge             = {currEdge.start, nextEdge.end};
+          const size_t highIdx     = std::max(currIdx, nextIdx);
+          const size_t lowIdx      = std::min(currIdx, nextIdx);
+          edgeList.erase(edgeList.begin() + static_cast<std::ptrdiff_t>(highIdx));
+          edgeList.erase(edgeList.begin() + static_cast<std::ptrdiff_t>(lowIdx));
+          edgeList.insert(edgeList.begin() + static_cast<std::ptrdiff_t>(lowIdx), newEdge);
+          currentEdgeIdx = (lowIdx + 1) % edgeList.size();
+        };
+
+        auto removeCurrentEdge = [&]() {
+          if (edgeList.empty())
+            return;
+          const size_t n       = edgeList.size();
+          const size_t prevIdx = (currentEdgeIdx + n - 1) % n;
+          const size_t currIdx = currentEdgeIdx;
+
+          Edge prevEdge = edgeList[prevIdx];
+          Edge currEdge = edgeList[currIdx];
+
+          if (prevEdge.start == currEdge.end && n > 2) {
+            const size_t highIdx = std::max(currIdx, prevIdx);
+            const size_t lowIdx  = std::min(currIdx, prevIdx);
+            edgeList.erase(edgeList.begin() + static_cast<std::ptrdiff_t>(highIdx));
+            edgeList.erase(edgeList.begin() + static_cast<std::ptrdiff_t>(lowIdx));
+            if (!edgeList.empty()) {
+              const size_t newPrevIdx = (lowIdx + edgeList.size() - 1) % edgeList.size();
+              const size_t newCurrIdx = lowIdx % edgeList.size();
+              edgeList[newPrevIdx].end = edgeList[newCurrIdx].start;
+              currentEdgeIdx           = newCurrIdx;
+            } else {
+              currentEdgeIdx = 0;
             }
-            break;
+          } else {
+            edgeList[prevIdx].end = currEdge.end;
+            edgeList.erase(edgeList.begin() + static_cast<std::ptrdiff_t>(currIdx));
+            currentEdgeIdx = edgeList.empty() ? 0 : currIdx % edgeList.size();
           }
-          case 10: { // op10
-            vertexOffset++;
+        };
+
+        // ── main decode loop ─────────────────────────────────────────────────
+
+        while (offset < rawData.size()) {
+          // Early-abort when clearly in the wrong mode:
+          // face count >10% over expected, OR edge list grown absurdly large
+          // (both happen when the wrong payload width misinterprets the byte stream)
+          if (expectedFaceCount > 0 &&
+              (triangles.size() > expectedFaceCount + expectedFaceCount / 10 ||
+               edgeList.size() > expectedFaceCount / 4 + 1000))
             break;
-          }
-          default: {
-            std::cerr << "Warning: Invalid command detected: " << static_cast<int>(command) << std::endl;
-            break;
+
+          const uint8_t opcode = static_cast<uint8_t>(rawData[offset]) & 0x0F;
+          offset++;
+
+          switch (opcode) {
+            case 0: { // VERTEX_LIST
+              extendCurrentEdge(globalVertexPtr++);
+              advanceEdgePointer(2);
+              break;
+            }
+            case 1: { // PREVIOUS
+              handlePrevious();
+              break;
+            }
+            case 2: { // NEXT
+              handleNext();
+              break;
+            }
+            case 3: { // IGNORE
+              advanceEdgePointer(1);
+              break;
+            }
+            case 4: { // RESTART
+              const size_t v0 = globalVertexPtr++;
+              const size_t v1 = globalVertexPtr++;
+              const size_t v2 = globalVertexPtr++;
+              createRestartFace(v0, v1, v2);
+              break;
+            }
+            case 5: { // RESTART_16 — payload width depends on mode
+              if (!requireBytes(use32BitPayload ? 12 : 6)) break;
+              createRestartFace(readIdx(), readIdx(), readIdx());
+              break;
+            }
+            case 6: { // RESTART_32 — always 32-bit
+              if (!requireBytes(12)) break;
+              createRestartFace(readUint32(), readUint32(), readUint32());
+              break;
+            }
+            case 7: { // ABSOLUTE_16 — payload width depends on mode
+              if (!requireBytes(use32BitPayload ? 4 : 2)) break;
+              extendCurrentEdge(readIdx());
+              advanceEdgePointer(2);
+              break;
+            }
+            case 8: { // ABSOLUTE_32 — always 32-bit
+              if (!requireBytes(4)) break;
+              extendCurrentEdge(readUint32());
+              advanceEdgePointer(2);
+              break;
+            }
+            case 9: { // REMOVE
+              removeCurrentEdge();
+              break;
+            }
+            case 10: { // INCREASE_VERTEX_LIST_POINTER
+              globalVertexPtr++;
+              break;
+            }
+            default:
+              break;
           }
         }
-      }
 
-      return Triangles;
+        return triangles;
+      }; // end decode lambda
+
+      // ── mode detection: try 16-bit, fall back to 32-bit (mirrors hpsdecode) ──
+
+      auto result = decode(false);
+      if (result.size() == expectedFaceCount)
+        return result;
+
+      auto result32 = decode(true);
+      if (result32.size() == expectedFaceCount)
+        return result32;
+
+      // Neither mode matched — return whichever is closer and warn
+      std::cerr << "Warning: Face count mismatch — expected " << expectedFaceCount
+                << ", got " << result32.size() << " (32-bit) or " << result.size() << " (16-bit)"
+                << std::endl;
+      return result32;
     }
 
     std::vector<Open3SDCM::Triangle> ParseFacets(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes, const std::string& schema, const std::map<std::string, std::string>& props)
@@ -587,7 +618,6 @@ namespace Open3SDCM
       {
         auto versionElement = dynamic_cast<Poco::XML::Element*>(versionNodes->item(0));
         std::string version = versionElement->getAttribute("version");
-        std::cout << "Version: " << version << std::endl;
       }
 
       if (Poco::AutoPtr<Poco::XML::NodeList> schemaNodes = document->getElementsByTagName("Schema");
@@ -603,7 +633,6 @@ namespace Open3SDCM
             schema = firstChild->nodeValue();
           }
         }
-        std::cout << "Schema: " << schema << std::endl;
       }
 
       std::map<std::string, std::string> properties;
@@ -621,18 +650,12 @@ namespace Open3SDCM
                 }
             }
         }
-
-        if (properties.count("SourceApp")) {
-            std::cout << "SourceApp: " << properties["SourceApp"] << std::endl;
-        }
       }
 
       if (Poco::AutoPtr<Poco::XML::NodeList> GeometryBinaryNodes = document->getElementsByTagName("Binary_data");
           GeometryBinaryNodes->length() > 0)
       {
         auto GeometryBinaryElement = dynamic_cast<Poco::XML::Element*>(GeometryBinaryNodes->item(0));
-        std::string GeometryBinary = GeometryBinaryElement->getAttribute("value");
-        std::cout << "GeometryBinary: " << GeometryBinary << std::endl;
         ParseBinaryData(GeometryBinaryNodes, schema, properties);
       }
     }
