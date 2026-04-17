@@ -53,9 +53,6 @@ jobs:
     needs: prepare
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
-    env:
-      VCPKG_FORCE_SYSTEM_BINARIES: ${{ runner.os == 'Linux' && '1' || '' }}
-      VCPKG_DEFAULT_TRIPLET: ${{ runner.os == 'Windows' && 'x64-windows' || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -67,6 +64,8 @@ jobs:
             artifact_name: release-linux
             archive_extension: tar.gz
             archive_format: gnutar
+            vcpkg_force_system_binaries: '1'
+            vcpkg_default_triplet: ''
           - name: macOS
             os: macos-latest
             asset_suffix: macos
@@ -74,6 +73,8 @@ jobs:
             artifact_name: release-macos
             archive_extension: tar.gz
             archive_format: gnutar
+            vcpkg_force_system_binaries: ''
+            vcpkg_default_triplet: ''
           - name: Windows
             os: windows-latest
             asset_suffix: windows
@@ -81,6 +82,8 @@ jobs:
             artifact_name: release-windows
             archive_extension: zip
             archive_format: zip
+            vcpkg_force_system_binaries: ''
+            vcpkg_default_triplet: 'x64-windows'
 
     steps:
       - name: Checkout source
@@ -113,9 +116,15 @@ jobs:
           ninja --version
 
       - name: Configure release build
+        env:
+          VCPKG_FORCE_SYSTEM_BINARIES: ${{ matrix.vcpkg_force_system_binaries }}
+          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_default_triplet }}
         run: cmake --preset ninja-release-vcpkg
 
       - name: Build release binaries
+        env:
+          VCPKG_FORCE_SYSTEM_BINARIES: ${{ matrix.vcpkg_force_system_binaries }}
+          VCPKG_DEFAULT_TRIPLET: ${{ matrix.vcpkg_default_triplet }}
         run: cmake --build --preset ninja-release-vcpkg --parallel
 
       - name: Package release asset
