@@ -178,25 +178,25 @@ For detailed format documentation, see:
 
 1. Update the version in the `VERSION` file
 2. Commit your changes
-3. Create and push a tag:
+3. Create and push the matching tag:
 ```bash
-git tag v0.1.1
-git push origin v0.1.1
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
-The GitHub Actions workflow will automatically build binaries for Linux, macOS, and Windows and create a release.
+The GitHub Actions "Build and Publish Release" workflow will automatically build binaries for Linux, macOS, and Windows and create a release.
 
 ### Method 2: Manual Workflow Dispatch
 
 You can trigger a release build without creating a tag:
 
 1. Go to the "Actions" tab on GitHub
-2. Select the "Release" workflow
+2. Select the "Build and Publish Release" workflow
 3. Click "Run workflow"
-4. Enter the version (e.g., `v0.1.1`)
+4. Choose the branch whose `VERSION` file you want to release
 5. Click "Run workflow"
 
-This is useful for testing or rebuilding a release without creating a new tag.
+The workflow reads the version directly from the repository's `VERSION` file, making manual rebuilds consistent with tagged releases.
 
 ## Version Management
 
