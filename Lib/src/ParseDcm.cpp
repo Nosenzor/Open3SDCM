@@ -19,6 +19,7 @@
 #include <set>
 #include <iomanip>
 #include <charconv>
+#include <optional>
 
 #include <openssl/blowfish.h>
 #include <openssl/md5.h>
@@ -135,6 +136,89 @@ namespace Open3SDCM
       return rawData;
     }
 
+    std::optional<std::string> GetOptionalAttribute(const Poco::XML::Element& element, const std::string& attributeName)
+    {
+      if (!element.hasAttribute(attributeName))
+      {
+        return std::nullopt;
+      }
+
+      std::string value = element.getAttribute(attributeName);
+      if (value.empty())
+      {
+        return std::nullopt;
+      }
+
+      return value;
+    }
+
+    std::optional<std::size_t> ParseSizeT(const std::string& value)
+    {
+      std::size_t parsedValue = 0;
+      const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), parsedValue);
+      if (ec != std::errc())
+      {
+        return std::nullopt;
+      }
+
+      return parsedValue;
+    }
+
+    std::optional<std::uint32_t> ParseUint32(const std::string& value)
+    {
+      std::uint32_t parsedValue = 0;
+      const auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.size(), parsedValue);
+      if (ec != std::errc())
+      {
+        return std::nullopt;
+      }
+
+      return parsedValue;
+    }
+
+    std::optional<std::size_t> GetOptionalSizeTAttribute(const Poco::XML::Element& element, const std::string& attributeName)
+    {
+      const auto value = GetOptionalAttribute(element, attributeName);
+      if (!value.has_value())
+      {
+        return std::nullopt;
+      }
+
+      return ParseSizeT(*value);
+    }
+
+    Open3SDCM::ColorRGB DecodePackedColor(const std::uint32_t packedColor)
+    {
+      return {
+        static_cast<std::uint8_t>((packedColor >> 16U) & 0xFFU),
+        static_cast<std::uint8_t>((packedColor >> 8U) & 0xFFU),
+        static_cast<std::uint8_t>(packedColor & 0xFFU)
+      };
+    }
+
+    Poco::XML::Element* FindFirstDirectChildElement(Poco::XML::Node* parent, const std::string& elementName)
+    {
+      if (parent == nullptr)
+      {
+        return nullptr;
+      }
+
+      for (auto child = parent->firstChild(); child != nullptr; child = child->nextSibling())
+      {
+        if (child->nodeType() != Poco::XML::Node::ELEMENT_NODE)
+        {
+          continue;
+        }
+
+        if (child->nodeName() == elementName)
+        {
+          return dynamic_cast<Poco::XML::Element*>(child);
+        }
+      }
+
+      return nullptr;
+    }
+
     std::string ComputePackageLockHash(const std::map<std::string, std::string>& props)
     {
       auto it = props.find("PackageLockList");
@@ -182,64 +266,86 @@ namespace Open3SDCM
       }
     }
 
-    std::vector<char> DecryptBuffer(std::vector<char>& data, const std::string& schema, const std::map<std::string, std::string>& props)
+    std::vector<unsigned char> BuildCeKey(const std::map<std::string, std::string>& props, const bool scramble)
     {
-        if (schema != "CE") return data;
+      std::vector<unsigned char> key = {
+        0x34, 0x90, 0x02, 0x93, 0x58, 0x2F, 0x49, 0x94,
+        0x76, 0x02, 0x19, 0xDF, 0x3B, 0x56, 0x44, 0x1C
+      };
 
-        // Base key (extracted from dcm2stl reference implementation)
-        std::vector<unsigned char> key = {
-            0x34, 0x90, 0x02, 0x93, 0x58, 0x2F, 0x49, 0x94,
-            0x76, 0x02, 0x19, 0xDF, 0x3B, 0x56, 0x44, 0x1C
-        };
+      std::string ekid = "1";
+      const auto ekidIt = props.find("EKID");
+      if (ekidIt != props.end())
+      {
+        ekid = ekidIt->second;
+      }
 
-        // Check EKID
-        std::string ekid = "1";
-        auto it = props.find("EKID");
-        if (it != props.end()) ekid = it->second;
-
-        std::string packageHash = ComputePackageLockHash(props);
-        std::vector<unsigned char> finalKey = key;
-
-        if (ekid == "1" && !packageHash.empty()) {
-             for (char c : packageHash) {
-                 finalKey.push_back((unsigned char)c);
-             }
+      const std::string packageHash = ComputePackageLockHash(props);
+      std::vector<unsigned char> finalKey = key;
+      if (ekid == "1" && !packageHash.empty())
+      {
+        for (const char c : packageHash)
+        {
+          finalKey.push_back(static_cast<unsigned char>(c));
         }
+      }
 
-        // Decrypt
-        BF_KEY bfKey;
-        BF_set_key(&bfKey, finalKey.size(), finalKey.data());
-
-        // Pad to 8 bytes
-        size_t originalSize = data.size();
-        size_t padding = 0;
-        if (data.size() % 8 != 0) {
-            padding = 8 - (data.size() % 8);
-            data.resize(data.size() + padding, 0);
+      if (scramble)
+      {
+        std::reverse(finalKey.begin(), finalKey.end());
+        for (auto& byte : finalKey)
+        {
+          byte ^= 0x7BU;
         }
+      }
 
-        SwapEndianness(data);
+      return finalKey;
+    }
 
-        std::vector<char> decrypted(data.size());
-        for (size_t i = 0; i < data.size(); i += 8) {
-            BF_ecb_encrypt((unsigned char*)&data[i], (unsigned char*)&decrypted[i], &bfKey, BF_DECRYPT);
+    std::vector<char> DecryptBuffer(std::vector<char> data,
+                                    const std::string& schema,
+                                    const std::map<std::string, std::string>& props,
+                                    const bool scrambleKey = false,
+                                    const std::size_t truncateSize = 0)
+    {
+      if (schema != "CE")
+      {
+        if (truncateSize > 0 && data.size() > truncateSize)
+        {
+          data.resize(truncateSize);
         }
+        return data;
+      }
 
-        SwapEndianness(decrypted);
+      const auto finalKey = BuildCeKey(props, scrambleKey);
 
-        // Truncate to original size?
-        // The python code truncates to vertex_count * 12.
-        // Here we return the full decrypted buffer (potentially padded).
-        // The caller should handle truncation if needed, or we can truncate to originalSize.
-        // But originalSize might not be 8-byte aligned, so padding was added.
-        // If we truncate to originalSize, we might lose data if the original data was indeed padded?
-        // No, padding is added for encryption/decryption block size.
-        // If the original data was not a multiple of 8, it must have been padded before encryption?
-        // Or maybe the stream is just bytes.
-        // In Python: `decoded = decoded[:original_size]` where `original_size = vertex_count * 12`.
-        // So we should probably let the caller handle truncation based on vertex count.
+      BF_KEY bfKey;
+      BF_set_key(&bfKey, finalKey.size(), finalKey.data());
 
-        return decrypted;
+      if (data.size() % 8 != 0)
+      {
+        const std::size_t padding = 8 - (data.size() % 8);
+        data.resize(data.size() + padding, 0);
+      }
+
+      SwapEndianness(data);
+
+      std::vector<char> decrypted(data.size());
+      for (size_t i = 0; i < data.size(); i += 8)
+      {
+        BF_ecb_encrypt(reinterpret_cast<unsigned char*>(&data[i]),
+                       reinterpret_cast<unsigned char*>(&decrypted[i]),
+                       &bfKey,
+                       BF_DECRYPT);
+      }
+
+      SwapEndianness(decrypted);
+      if (truncateSize > 0 && decrypted.size() > truncateSize)
+      {
+        decrypted.resize(truncateSize);
+      }
+
+      return decrypted;
     }
 
     std::vector<float> ParseVertices(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes, const std::string& schema, const std::map<std::string, std::string>& props)
@@ -263,15 +369,9 @@ namespace Open3SDCM
               auto BufferSize = GetBufferSize(BinaryNodes, "Vertices");
               auto rawData = DecodeBuffer(base64Text, BufferSize);
 
-              rawData = DecryptBuffer(rawData, schema, props);
-
               auto vertexCount = GetElemCount(BinaryNodes, "Vertices");
-              std::size_t expectedSize = vertexCount * 3 * sizeof(float);
-
-              // Truncate to expected size
-              if (rawData.size() > expectedSize) {
-                  rawData.resize(expectedSize);
-              }
+              const std::size_t expectedSize = vertexCount * 3 * sizeof(float);
+              rawData = DecryptBuffer(std::move(rawData), schema, props, false, expectedSize);
 
               // Verify checksum for CE schema
               if (schema == "CE" && caElement->hasAttribute("check_value")) {
@@ -589,10 +689,625 @@ namespace Open3SDCM
         return {};
       }
     }
+    std::optional<Open3SDCM::ColorRGB> ParseFacetBaseColor(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes)
+    {
+      try
+      {
+        if (!BinaryNodes.isNull() && BinaryNodes->length() > 0)
+        {
+          auto binaryElement = dynamic_cast<Poco::XML::Element*>(BinaryNodes->item(0));
+          if (binaryElement)
+          {
+            Poco::AutoPtr<Poco::XML::NodeList> facetNodes = binaryElement->getElementsByTagName("Facets");
+            if (facetNodes->length() > 0)
+            {
+              auto facetsElement = dynamic_cast<Poco::XML::Element*>(facetNodes->item(0));
+              if (facetsElement != nullptr)
+              {
+                const auto colorValue = GetOptionalAttribute(*facetsElement, "color");
+                if (colorValue.has_value())
+                {
+                  const auto packedColor = ParseUint32(*colorValue);
+                  if (packedColor.has_value())
+                  {
+                    return DecodePackedColor(*packedColor);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+      catch (const Poco::Exception&)
+      {
+      }
+
+      return std::nullopt;
+    }
+
+    std::optional<Open3SDCM::TextureCoordinate> DecodePackedTextureCoordinate(const std::uint32_t packedTextureCoordinate)
+    {
+      if (packedTextureCoordinate == 0xFFFFFFFFU)
+      {
+        return std::nullopt;
+      }
+
+      const auto decodeComponent = [](const std::uint16_t componentBits) -> float
+      {
+        const bool outside = (componentBits & 0x8000U) != 0;
+        const std::uint16_t value = componentBits & 0x7FFFU;
+        if (!outside)
+        {
+          return static_cast<float>(value) / 32767.0F;
+        }
+
+        return static_cast<float>(value) * (512.0F / 32767.0F) - 256.0F;
+      };
+
+      return Open3SDCM::TextureCoordinate{
+        decodeComponent(static_cast<std::uint16_t>(packedTextureCoordinate & 0xFFFFU)),
+        decodeComponent(static_cast<std::uint16_t>((packedTextureCoordinate >> 16U) & 0xFFFFU))
+      };
+    }
+
+    std::vector<std::vector<std::size_t>> BuildVertexCornerMap(const std::vector<Open3SDCM::Triangle>& triangles,
+                                                               const std::size_t vertexCount)
+    {
+      std::vector<std::vector<std::size_t>> cornersByVertex(vertexCount);
+      for (std::size_t faceIndex = 0; faceIndex < triangles.size(); ++faceIndex)
+      {
+        const std::array<std::size_t, 3> faceVertices = {triangles[faceIndex].v1, triangles[faceIndex].v2, triangles[faceIndex].v3};
+        for (std::size_t cornerIndex = 0; cornerIndex < faceVertices.size(); ++cornerIndex)
+        {
+          const auto vertexIndex = faceVertices[cornerIndex];
+          if (vertexIndex >= vertexCount)
+          {
+            continue;
+          }
+          cornersByVertex[vertexIndex].push_back(faceIndex * 3 + cornerIndex);
+        }
+      }
+
+      return cornersByVertex;
+    }
+
+    std::vector<std::optional<Open3SDCM::TextureCoordinate>> DecodePerVertexTextureCoordinates(
+      const std::vector<char>& decryptedBytes,
+      const std::size_t vertexCount,
+      const std::vector<Open3SDCM::Triangle>& triangles)
+    {
+      const auto cornersByVertex = BuildVertexCornerMap(triangles, vertexCount);
+      std::vector<std::optional<Open3SDCM::TextureCoordinate>> cornerCoordinates(triangles.size() * 3);
+
+      std::size_t offset = 0;
+      const auto readByte = [&](std::uint8_t& value) -> bool
+      {
+        if (offset + sizeof(value) > decryptedBytes.size())
+        {
+          return false;
+        }
+
+        value = static_cast<std::uint8_t>(decryptedBytes[offset]);
+        offset += sizeof(value);
+        return true;
+      };
+
+      const auto readUint32LE = [&](std::uint32_t& value) -> bool
+      {
+        if (offset + sizeof(value) > decryptedBytes.size())
+        {
+          return false;
+        }
+
+        const auto* bytes = reinterpret_cast<const unsigned char*>(decryptedBytes.data() + offset);
+        value = static_cast<std::uint32_t>(bytes[0]) |
+                (static_cast<std::uint32_t>(bytes[1]) << 8U) |
+                (static_cast<std::uint32_t>(bytes[2]) << 16U) |
+                (static_cast<std::uint32_t>(bytes[3]) << 24U);
+        offset += sizeof(value);
+        return true;
+      };
+
+      for (std::size_t vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
+      {
+        std::uint8_t flag = 0;
+        if (!readByte(flag))
+        {
+          std::cerr << "Error: Unexpected end of UV stream while reading vertex flag" << std::endl;
+          return {};
+        }
+
+        const auto& vertexCorners = cornersByVertex[vertexIndex];
+        const std::size_t degree = vertexCorners.size();
+        if (flag == 0)
+        {
+          if (degree != 0)
+          {
+            std::cerr << "Error: Invalid UV stream, vertex degree mismatch" << std::endl;
+            return {};
+          }
+          continue;
+        }
+
+        std::size_t uvCount = 0;
+        if (flag == 1)
+        {
+          uvCount = degree == 0 ? 1U : 1U;
+        }
+        else if (flag == degree)
+        {
+          uvCount = degree;
+        }
+        else
+        {
+          std::cerr << "Error: Invalid UV stream, flag " << static_cast<unsigned int>(flag)
+                    << " does not match vertex degree " << degree << std::endl;
+          return {};
+        }
+
+        std::vector<std::optional<Open3SDCM::TextureCoordinate>> decodedCoordinates;
+        decodedCoordinates.reserve(uvCount);
+        for (std::size_t uvIndex = 0; uvIndex < uvCount; ++uvIndex)
+        {
+          std::uint32_t packedTextureCoordinate = 0;
+          if (!readUint32LE(packedTextureCoordinate))
+          {
+            std::cerr << "Error: Unexpected end of UV stream while reading packed coordinate" << std::endl;
+            return {};
+          }
+          decodedCoordinates.push_back(DecodePackedTextureCoordinate(packedTextureCoordinate));
+        }
+
+        if (degree == 0)
+        {
+          continue;
+        }
+
+        if (flag == 1)
+        {
+          for (const auto cornerIndex : vertexCorners)
+          {
+            cornerCoordinates[cornerIndex] = decodedCoordinates.front();
+          }
+          continue;
+        }
+
+        for (std::size_t cornerOrdinal = 0; cornerOrdinal < degree; ++cornerOrdinal)
+        {
+          cornerCoordinates[vertexCorners[cornerOrdinal]] = decodedCoordinates[cornerOrdinal];
+        }
+      }
+
+      return cornerCoordinates;
+    }
+
+    void ParseTextureCoordinateMetadata(Poco::XML::Element* textureDataElement,
+                                        const std::string& schema,
+                                        const std::map<std::string, std::string>& properties,
+                                        const std::size_t vertexCount,
+                                        const std::vector<Open3SDCM::Triangle>& triangles,
+                                        Open3SDCM::SurfaceData& surfaceData)
+    {
+      if (textureDataElement == nullptr)
+      {
+        return;
+      }
+
+      for (auto child = textureDataElement->firstChild(); child != nullptr; child = child->nextSibling())
+      {
+        auto textureCoordElement = dynamic_cast<Poco::XML::Element*>(child);
+        if (textureCoordElement == nullptr || textureCoordElement->tagName() != "PerVertexTextureCoord")
+        {
+          continue;
+        }
+
+        Open3SDCM::TextureCoordinateData textureCoordinate;
+        textureCoordinate.textureCoordId = GetOptionalAttribute(*textureCoordElement, "TextureCoordId");
+        textureCoordinate.textureId = GetOptionalAttribute(*textureCoordElement, "TextureId");
+        textureCoordinate.key = GetOptionalAttribute(*textureCoordElement, "Key");
+        if (const auto encodedByteCount = GetOptionalSizeTAttribute(*textureCoordElement, "Base64EncodedBytes"))
+        {
+          textureCoordinate.encodedByteCount = *encodedByteCount;
+        }
+
+        std::string base64Text = textureCoordElement->innerText();
+        const std::size_t estimatedBufferSize = textureCoordinate.encodedByteCount > 0
+          ? textureCoordinate.encodedByteCount
+          : base64Text.size();
+        auto rawData = DecodeBuffer(base64Text, estimatedBufferSize);
+        rawData = DecryptBuffer(std::move(rawData),
+                                schema,
+                                properties,
+                                textureCoordinate.key.has_value(),
+                                textureCoordinate.encodedByteCount);
+        textureCoordinate.cornerCoordinates = DecodePerVertexTextureCoordinates(rawData, vertexCount, triangles);
+
+        surfaceData.textureCoordinates.push_back(std::move(textureCoordinate));
+      }
+    }
+
+    void ParseTextureImages(Poco::XML::Element* textureImagesElement, Open3SDCM::SurfaceData& surfaceData)
+    {
+      if (textureImagesElement == nullptr)
+      {
+        return;
+      }
+
+      for (auto child = textureImagesElement->firstChild(); child != nullptr; child = child->nextSibling())
+      {
+        auto textureImageElement = dynamic_cast<Poco::XML::Element*>(child);
+        if (textureImageElement == nullptr || textureImageElement->tagName() != "TextureImage")
+        {
+          continue;
+        }
+
+        Open3SDCM::EmbeddedTextureImage textureImage;
+        textureImage.version = GetOptionalAttribute(*textureImageElement, "Version");
+        textureImage.textureName = GetOptionalAttribute(*textureImageElement, "TextureName");
+        textureImage.id = GetOptionalAttribute(*textureImageElement, "Id");
+        textureImage.textureId = GetOptionalAttribute(*textureImageElement, "TextureId");
+        textureImage.refTextureCoordId = GetOptionalAttribute(*textureImageElement, "RefTextureCoordId");
+        textureImage.textureCoordSet = GetOptionalAttribute(*textureImageElement, "TextureCoordSet");
+        textureImage.mimeType = std::string("image/jpeg");
+
+        if (const auto width = GetOptionalSizeTAttribute(*textureImageElement, "Width"))
+        {
+          textureImage.width = *width;
+        }
+        if (const auto height = GetOptionalSizeTAttribute(*textureImageElement, "Height"))
+        {
+          textureImage.height = *height;
+        }
+        if (const auto bytesPerPixel = GetOptionalSizeTAttribute(*textureImageElement, "BytesPerPixel"))
+        {
+          textureImage.bytesPerPixel = *bytesPerPixel;
+        }
+        if (const auto encodedByteCount = GetOptionalSizeTAttribute(*textureImageElement, "Base64EncodedBytes"))
+        {
+          textureImage.encodedByteCount = *encodedByteCount;
+        }
+
+        std::string base64Text = textureImageElement->innerText();
+        const std::size_t estimatedBufferSize = textureImage.encodedByteCount > 0 ? textureImage.encodedByteCount : base64Text.size();
+        auto decodedBytes = DecodeBuffer(base64Text, estimatedBufferSize);
+        textureImage.imageBytes.assign(decodedBytes.begin(), decodedBytes.end());
+
+        surfaceData.textureImages.push_back(std::move(textureImage));
+      }
+    }
+
+    void ParseSurfaceData(Poco::AutoPtr<Poco::XML::Document> document,
+                          const std::string& schema,
+                          const std::map<std::string, std::string>& properties,
+                          const std::size_t vertexCount,
+                          const std::vector<Open3SDCM::Triangle>& triangles,
+                          Open3SDCM::SurfaceData& surfaceData)
+    {
+      if (document.isNull())
+      {
+        return;
+      }
+
+      auto* rootElement = document->documentElement();
+      if (rootElement == nullptr)
+      {
+        return;
+      }
+
+      auto* textureDataElement = FindFirstDirectChildElement(rootElement, "TextureData2");
+      if (textureDataElement == nullptr)
+      {
+        ParseTextureImages(FindFirstDirectChildElement(rootElement, "TextureImages"), surfaceData);
+        return;
+      }
+
+      ParseTextureCoordinateMetadata(textureDataElement, schema, properties, vertexCount, triangles, surfaceData);
+      ParseTextureImages(FindFirstDirectChildElement(textureDataElement, "TextureImages"), surfaceData);
+    }
+
+    bool EnsureParentDirectoryExists(const fs::path& outputPath)
+    {
+      if (!outputPath.has_parent_path())
+      {
+        return true;
+      }
+
+      std::error_code errorCode;
+      fs::create_directories(outputPath.parent_path(), errorCode);
+      return !errorCode;
+    }
+
+    float NormalizeColorChannel(const std::uint8_t value)
+    {
+      return static_cast<float>(value) / 255.0F;
+    }
+
+    const Open3SDCM::TextureCoordinateData* FindTextureCoordinateDataById(
+      const Open3SDCM::SurfaceData& surfaceData,
+      const std::optional<std::string>& textureCoordId,
+      const std::optional<std::string>& textureId)
+    {
+      const auto matchesCoordId = [&](const Open3SDCM::TextureCoordinateData& candidate) -> bool
+      {
+        return textureCoordId.has_value() && candidate.textureCoordId == textureCoordId && candidate.HasDecodedCoordinates();
+      };
+      const auto matchesTextureId = [&](const Open3SDCM::TextureCoordinateData& candidate) -> bool
+      {
+        return textureId.has_value() && candidate.textureId == textureId && candidate.HasDecodedCoordinates();
+      };
+
+      for (const auto& candidate : surfaceData.textureCoordinates)
+      {
+        if (matchesCoordId(candidate))
+        {
+          return &candidate;
+        }
+      }
+      for (const auto& candidate : surfaceData.textureCoordinates)
+      {
+        if (matchesTextureId(candidate))
+        {
+          return &candidate;
+        }
+      }
+      for (const auto& candidate : surfaceData.textureCoordinates)
+      {
+        if (candidate.HasDecodedCoordinates())
+        {
+          return &candidate;
+        }
+      }
+
+      return nullptr;
+    }
+
+    struct ExportTextureBinding
+    {
+      const Open3SDCM::TextureCoordinateData* coordinates{nullptr};
+      const Open3SDCM::EmbeddedTextureImage* image{nullptr};
+    };
+
+    ExportTextureBinding FindTextureBinding(const Open3SDCM::SurfaceData& surfaceData)
+    {
+      for (const auto& textureImage : surfaceData.textureImages)
+      {
+        if (textureImage.imageBytes.empty())
+        {
+          continue;
+        }
+
+        const auto* coordinates = FindTextureCoordinateDataById(surfaceData,
+                                                                textureImage.refTextureCoordId,
+                                                                textureImage.textureId);
+        if (coordinates != nullptr)
+        {
+          return {coordinates, &textureImage};
+        }
+      }
+
+      const auto* coordinates = FindTextureCoordinateDataById(surfaceData, std::nullopt, std::nullopt);
+      if (coordinates != nullptr)
+      {
+        return {coordinates, surfaceData.textureImages.empty() ? nullptr : &surfaceData.textureImages.front()};
+      }
+
+      if (!surfaceData.textureImages.empty())
+      {
+        return {nullptr, &surfaceData.textureImages.front()};
+      }
+
+      return {};
+    }
+
+    std::string GuessTextureExtension(const Open3SDCM::EmbeddedTextureImage& textureImage)
+    {
+      if (textureImage.mimeType.has_value())
+      {
+        if (*textureImage.mimeType == "image/jpeg" || *textureImage.mimeType == "image/jpg")
+        {
+          return ".jpg";
+        }
+        if (*textureImage.mimeType == "image/png")
+        {
+          return ".png";
+        }
+      }
+
+      return ".bin";
+    }
+
+    bool WriteTextureFile(const fs::path& outputPath, const std::vector<std::uint8_t>& bytes)
+    {
+      std::ofstream output(outputPath, std::ios::binary);
+      if (!output)
+      {
+        return false;
+      }
+
+      output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+      return output.good();
+    }
+
+    bool ExportPly(const fs::path& outputPath,
+                   const std::vector<float>& vertices,
+                   const std::vector<Open3SDCM::Triangle>& triangles,
+                   const Open3SDCM::SurfaceData& surfaceData)
+    {
+      if (!EnsureParentDirectoryExists(outputPath))
+      {
+        return false;
+      }
+
+      std::ofstream output(outputPath);
+      if (!output)
+      {
+        return false;
+      }
+
+      const bool hasColor = surfaceData.baseColor.has_value();
+      output << "ply\n";
+      output << "format ascii 1.0\n";
+      output << "element vertex " << (vertices.size() / 3) << "\n";
+      output << "property float x\n";
+      output << "property float y\n";
+      output << "property float z\n";
+      if (hasColor)
+      {
+        output << "property uchar red\n";
+        output << "property uchar green\n";
+        output << "property uchar blue\n";
+      }
+      output << "element face " << triangles.size() << "\n";
+      output << "property list uchar int vertex_indices\n";
+      output << "end_header\n";
+
+      for (std::size_t vertexIndex = 0; vertexIndex < vertices.size() / 3; ++vertexIndex)
+      {
+        output << vertices[vertexIndex * 3 + 0] << ' '
+               << vertices[vertexIndex * 3 + 1] << ' '
+               << vertices[vertexIndex * 3 + 2];
+        if (hasColor)
+        {
+          output << ' ' << static_cast<unsigned int>(surfaceData.baseColor->r)
+                 << ' ' << static_cast<unsigned int>(surfaceData.baseColor->g)
+                 << ' ' << static_cast<unsigned int>(surfaceData.baseColor->b);
+        }
+        output << '\n';
+      }
+
+      for (const auto& triangle : triangles)
+      {
+        output << "3 " << triangle.v1 << ' ' << triangle.v2 << ' ' << triangle.v3 << '\n';
+      }
+
+      return output.good();
+    }
+
+    bool ExportObj(const fs::path& outputPath,
+                   const std::vector<float>& vertices,
+                   const std::vector<Open3SDCM::Triangle>& triangles,
+                   const Open3SDCM::SurfaceData& surfaceData)
+    {
+      if (!EnsureParentDirectoryExists(outputPath))
+      {
+        return false;
+      }
+
+      const ExportTextureBinding textureBinding = FindTextureBinding(surfaceData);
+      const bool hasTextureCoordinates = textureBinding.coordinates != nullptr &&
+        textureBinding.coordinates->cornerCoordinates.size() == triangles.size() * 3;
+      const bool hasTextureImage = textureBinding.image != nullptr && !textureBinding.image->imageBytes.empty();
+      const bool writeMaterial = surfaceData.baseColor.has_value() || hasTextureImage;
+
+      const fs::path materialPath = outputPath.parent_path() / (outputPath.stem().string() + ".mtl");
+      fs::path texturePath;
+      if (hasTextureImage)
+      {
+        texturePath = outputPath.parent_path() /
+          (outputPath.stem().string() + "_texture0" + GuessTextureExtension(*textureBinding.image));
+        if (!WriteTextureFile(texturePath, textureBinding.image->imageBytes))
+        {
+          return false;
+        }
+      }
+
+      if (writeMaterial)
+      {
+        std::ofstream materialOutput(materialPath);
+        if (!materialOutput)
+        {
+          return false;
+        }
+
+        materialOutput << "newmtl material0\n";
+        if (surfaceData.baseColor.has_value())
+        {
+          materialOutput << "Kd "
+                         << NormalizeColorChannel(surfaceData.baseColor->r) << ' '
+                         << NormalizeColorChannel(surfaceData.baseColor->g) << ' '
+                         << NormalizeColorChannel(surfaceData.baseColor->b) << "\n";
+        }
+        else
+        {
+          materialOutput << "Kd 0.800000 0.800000 0.800000\n";
+        }
+        materialOutput << "illum 2\n";
+        if (hasTextureImage)
+        {
+          materialOutput << "map_Kd " << texturePath.filename().string() << "\n";
+        }
+        if (!materialOutput.good())
+        {
+          return false;
+        }
+      }
+
+      std::ofstream output(outputPath);
+      if (!output)
+      {
+        return false;
+      }
+
+      if (writeMaterial)
+      {
+        output << "mtllib " << materialPath.filename().string() << "\n";
+      }
+      output << "o mesh\n";
+      if (writeMaterial)
+      {
+        output << "usemtl material0\n";
+      }
+
+      for (std::size_t vertexIndex = 0; vertexIndex < vertices.size() / 3; ++vertexIndex)
+      {
+        output << "v "
+               << vertices[vertexIndex * 3 + 0] << ' '
+               << vertices[vertexIndex * 3 + 1] << ' '
+               << vertices[vertexIndex * 3 + 2] << "\n";
+      }
+
+      if (hasTextureCoordinates)
+      {
+        for (const auto& cornerCoordinate : textureBinding.coordinates->cornerCoordinates)
+        {
+          const auto resolvedCoordinate = cornerCoordinate.value_or(Open3SDCM::TextureCoordinate{});
+          // The decoded CE texture coordinates use the image's top-left origin,
+          // while OBJ consumers expect V to be measured from the bottom edge.
+          const float exportedV = cornerCoordinate.has_value() ? 1.0F - resolvedCoordinate.v : resolvedCoordinate.v;
+          output << "vt " << resolvedCoordinate.u << ' ' << exportedV << "\n";
+        }
+      }
+
+      for (std::size_t faceIndex = 0; faceIndex < triangles.size(); ++faceIndex)
+      {
+        const auto& triangle = triangles[faceIndex];
+        if (hasTextureCoordinates)
+        {
+          output << "f "
+                 << (triangle.v1 + 1) << '/' << (faceIndex * 3 + 1) << ' '
+                 << (triangle.v2 + 1) << '/' << (faceIndex * 3 + 2) << ' '
+                 << (triangle.v3 + 1) << '/' << (faceIndex * 3 + 3) << "\n";
+        }
+        else
+        {
+          output << "f "
+                 << (triangle.v1 + 1) << ' '
+                 << (triangle.v2 + 1) << ' '
+                 << (triangle.v3 + 1) << "\n";
+        }
+      }
+
+      return output.good();
+    }
+
   }// namespace detail
 
   void DCMParser::ParseDCM(const fs::path& filePath)
   {
+    m_Vertices.clear();
+    m_Triangles.clear();
+    m_SurfaceData = {};
+
     try
     {
       // Read the file content
@@ -658,6 +1373,8 @@ namespace Open3SDCM
         auto GeometryBinaryElement = dynamic_cast<Poco::XML::Element*>(GeometryBinaryNodes->item(0));
         ParseBinaryData(GeometryBinaryNodes, schema, properties);
       }
+
+      detail::ParseSurfaceData(document, schema, properties, m_Vertices.size() / 3, m_Triangles, m_SurfaceData);
     }
     catch (const Poco::XML::XMLException& ex)
     {
@@ -681,6 +1398,8 @@ namespace Open3SDCM
       auto NbFaces = detail::GetElemCount(BinaryNodes, "Facets");
       fmt::print("Expected to get {} vertices\n", NbVertices);
       fmt::print("Expected to get {} faces\n", NbFaces);
+
+      m_SurfaceData.baseColor = detail::ParseFacetBaseColor(BinaryNodes);
 
       //Parse vertices
       m_Vertices = detail::ParseVertices(BinaryNodes, schema, properties);
@@ -720,7 +1439,6 @@ namespace Open3SDCM
       return false;
     }
 
-    // Validate triangle indices
     const size_t numVertices = m_Vertices.size() / 3;
     size_t invalidTriangles = 0;
     for (size_t i = 0; i < m_Triangles.size(); ++i)
@@ -741,11 +1459,35 @@ namespace Open3SDCM
       return false;
     }
 
-    // Create Assimp scene
+    if (format == "ply")
+    {
+      const bool exported = detail::ExportPly(outputPath, m_Vertices, m_Triangles, m_SurfaceData);
+      if (!exported)
+      {
+        fmt::print("Error: Failed to export mesh to PLY\n");
+        return false;
+      }
+
+      fmt::print("Successfully exported mesh to: {}\n", outputPath.string());
+      return true;
+    }
+
+    if (format == "obj")
+    {
+      const bool exported = detail::ExportObj(outputPath, m_Vertices, m_Triangles, m_SurfaceData);
+      if (!exported)
+      {
+        fmt::print("Error: Failed to export mesh to OBJ\n");
+        return false;
+      }
+
+      fmt::print("Successfully exported mesh to: {}\n", outputPath.string());
+      return true;
+    }
+
     aiScene* scene = new aiScene();
     scene->mRootNode = new aiNode();
 
-    // Create mesh
     scene->mNumMeshes = 1;
     scene->mMeshes = new aiMesh*[1];
     aiMesh* mesh = new aiMesh();
@@ -754,7 +1496,6 @@ namespace Open3SDCM
     scene->mRootNode->mMeshes = new unsigned int[1];
     scene->mRootNode->mMeshes[0] = 0;
 
-    // Set vertices
     mesh->mNumVertices = numVertices;
     mesh->mVertices = new aiVector3D[mesh->mNumVertices];
     for (size_t i = 0; i < mesh->mNumVertices; ++i)
@@ -764,7 +1505,6 @@ namespace Open3SDCM
       mesh->mVertices[i].z = m_Vertices[i * 3 + 2];
     }
 
-    // Set faces
     mesh->mNumFaces = m_Triangles.size();
     mesh->mFaces = new aiFace[mesh->mNumFaces];
     for (size_t i = 0; i < mesh->mNumFaces; ++i)
@@ -777,24 +1517,18 @@ namespace Open3SDCM
       face.mIndices[2] = m_Triangles[i].v3;
     }
 
-    // Create a default material
     scene->mNumMaterials = 1;
     scene->mMaterials = new aiMaterial*[1];
     scene->mMaterials[0] = new aiMaterial();
     mesh->mMaterialIndex = 0;
 
-    // Determine format ID for Assimp
     std::string formatId = format;
     if (format == "stl") formatId = "stl";
-    else if (format == "obj") formatId = "obj";
-    else if (format == "ply") formatId = "ply";
-    else if (format == "stlb") formatId = "stlb";  // STL binary
+    else if (format == "stlb") formatId = "stlb";
 
-    // Export using Assimp without JoinIdenticalVertices to avoid crashes
     Assimp::Exporter exporter;
     aiReturn result = exporter.Export(scene, formatId, outputPath.string(), 0);
 
-    // Clean up
     delete scene;
 
     if (result != AI_SUCCESS)

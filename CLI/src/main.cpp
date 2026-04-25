@@ -7,14 +7,9 @@
 //FMT
 #include "fmt/compile.h"
 #include "fmt/format.h"
-#include "fmt/std.h"
 // STL
 #include <filesystem>
 #include <fstream>
-
-// Spd Log
-#include "spdlog/sinks/basic_file_sink.h"
-
 
 // POCO
 #include "Poco/Path.h"
