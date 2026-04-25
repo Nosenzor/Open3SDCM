@@ -18,12 +18,24 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux
+          - name: Linux / GCC
             os: ubuntu-latest
+            compiler: GCC
+            cc: gcc
+            cxx: g++
+            linux_packages: ninja-build g++
+          - name: Linux / Clang
+            os: ubuntu-latest
+            compiler: Clang
+            cc: clang
+            cxx: clang++
+            linux_packages: ninja-build clang
           - name: macOS
             os: macos-latest
+            compiler: AppleClang
           - name: Windows
             os: windows-latest
+            compiler: MSVC
 
     steps:
       - uses: actions/checkout@v4
@@ -42,9 +54,9 @@ jobs:
           docker-images: false
           swap-storage: true
 
-      - name: Install Ninja
+      - name: Install Linux build tools
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.linux_packages }}
 
       - name: Setup ccache
         if: runner.os != 'Windows'
@@ -74,6 +86,8 @@ jobs:
           configurePreset: ninja-release-vcpkg-tests
           buildPreset: ninja-release-vcpkg-tests
         env:
+          CC: ${{ matrix.cc || '' }}
+          CXX: ${{ matrix.cxx || '' }}
           VCPKG_FORCE_SYSTEM_BINARIES: ${{ runner.os == 'Linux' && '1' || '' }}
           SCCACHE_GHA_ENABLED: ${{ runner.os == 'Windows' && 'true' || '' }}
 
