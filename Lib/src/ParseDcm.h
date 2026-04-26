@@ -25,6 +25,7 @@ namespace Open3SDCM
 
     std::vector<float> m_Vertices; //Buffer of vertices (x,y,z) contigous size/3 to get Nb of Vertices
     std::vector<Triangle> m_Triangles; //Buffer of triangles (indices)
+    SurfaceData m_SurfaceData;
   private:
     void ParseBinaryData(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes, const std::string& schema, const std::map<std::string, std::string>& properties);
 
