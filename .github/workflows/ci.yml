@@ -79,16 +79,26 @@ jobs:
           VCPKG_DEFAULT_TRIPLET: ${{ runner.os == 'Windows' && 'x64-windows' || '' }}
           SCCACHE_GHA_ENABLED: ${{ runner.os == 'Windows' && 'true' || '' }}
 
-      - name: Configure and build
+      - name: Configure and build (Linux)
+        if: runner.os == 'Linux'
         uses: lukka/run-cmake@v10.7
         with:
           cmakeListsTxtPath: '${{ github.workspace }}/CMakeLists.txt'
           configurePreset: ninja-release-vcpkg-tests
           buildPreset: ninja-release-vcpkg-tests
         env:
-          CC: ${{ matrix.cc || '' }}
-          CXX: ${{ matrix.cxx || '' }}
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
           VCPKG_FORCE_SYSTEM_BINARIES: ${{ runner.os == 'Linux' && '1' || '' }}
+
+      - name: Configure and build (macOS / Windows)
+        if: runner.os != 'Linux'
+        uses: lukka/run-cmake@v10.7
+        with:
+          cmakeListsTxtPath: '${{ github.workspace }}/CMakeLists.txt'
+          configurePreset: ninja-release-vcpkg-tests
+          buildPreset: ninja-release-vcpkg-tests
+        env:
           SCCACHE_GHA_ENABLED: ${{ runner.os == 'Windows' && 'true' || '' }}
 
       - name: Run tests
