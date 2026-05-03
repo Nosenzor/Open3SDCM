@@ -1,0 +1,88 @@
+{
+  "project": {
+    "name": "Open3SDCM",
+    "description": "C++20 library and CLI tool for parsing 3Shape DCM dental scan files and exporting meshes to STL, PLY, or OBJ",
+    "version_file": "VERSION",
+    "language": "C++20",
+    "license": "MIT"
+  },
+  "build": {
+    "system": "CMake",
+    "generator": "Ninja",
+    "presets": {
+      "default": "ninja-release-vcpkg",
+      "tests": "ninja-release-vcpkg-tests",
+      "sanitizers": "ninja-sanitizers-vcpkg"
+    },
+    "dependencies": {
+      "manager": "vcpkg",
+      "mode": "manifest",
+      "manifest_file": "vcpkg.json",
+      "packages": [
+        "boost-test",
+        "boost-program-options",
+        "boost-dynamic-bitset",
+        "fmt",
+        "poco",
+        "spdlog",
+        "assimp",
+        "openssl"
+      ]
+    }
+  },
+  "paths": {
+    "source_dir": ".",
+    "lib_dir": "Lib",
+    "cli_dir": "CLI",
+    "test_tools_dir": "TestTools",
+    "test_data_dir": "TestData",
+    "build_dir": "builds",
+    "output_dir": "Output"
+  },
+  "code_style": {
+    "formatter": "clang-format",
+    "style": "LLVM",
+    "indent": 2,
+    "pointer_alignment": "left",
+    "column_limit": 0
+  },
+  "platforms": ["Linux", "macOS", "Windows"],
+  "compilers": ["GCC", "Clang", "AppleClang", "MSVC"],
+  "namespace": "Open3SDCM",
+  "internal_namespace": "Open3SDCM::detail",
+  "ci": {
+    "workflows": {
+      "ci": ".github/workflows/ci.yml",
+      "release": ".github/workflows/release.yml"
+    }
+  },
+  "vibe": {
+    "primary_agent": "expert-cpp-software-engineer.agent.md",
+    "agents_dir": ".vibe/agents",
+    "instructions_dir": ".vibe/instructions",
+    "skills_dir": ".github/skills",
+    "workflows_dir": ".github/workflows"
+  },
+  "conventions": {
+    "error_handling": "Return sensible defaults from public API (empty vectors, false) rather than throwing",
+    "logging": "Use spdlog for structured logging, fmt::print for CLI output",
+    "xml_zip": "Use Poco::XML::DOMParser and Poco::Zip::Decompress exclusively",
+    "mesh_export": "Use assimp aiScene exporter",
+    "windows_flags": "/wd4251, /utf-8, -DNOMINMAX"
+  },
+  "parse_flow": {
+    "steps": [
+      "DCMParser::ParseDCM(path) - unzip, locate HPS XML, read Schema, collect Properties",
+      "DCMParser::ParseBinaryData(nodes, schema, props) - dispatch to detail::ParseVertices and detail::ParseFacets",
+      "detail::DecodeBuffer - base64 decode data",
+      "Optional decryption (Blowfish/OpenSSL for CE schema only)",
+      "Verify CRC32 checksum",
+      "Interpret raw bytes as vertices/ triangles",
+      "Store vertices as flat std::vector<float> in x,y,z order",
+      "Store triangles as std::vector<Triangle> with 0-based indices",
+      "DCMParser::ExportMesh(outputPath, format) - build aiScene, use assimp exporter"
+    ]
+  },
+  "supported_schemas": ["CA", "CB", "CC", "CE"],
+  "ce_schema_requirement": "Requires PackageLockList property for decryption key derivation via MD5"
+}
