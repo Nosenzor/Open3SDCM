@@ -1,22 +1,179 @@
 # Open3SDCM
 
-An open-source C++ library and CLI tool for converting 3Shape DCM files to standard 3D formats (STL, OBJ, PLY).
+An open-source C++20 library and CLI tool for converting 3Shape DCM files to standard 3D formats (STL, OBJ, PLY).
 
-## Features
+## Features & Achievements
 
-The project aims to provide a comprehensive solution for reading and converting 3Shape DCM files:
+| Status | Feature | Description | Version |
+|--------|---------|-------------|---------|
+| ✅ | **Read mesh geometry** | Extract vertices and triangles from DCM files | v0.1.0 |
+| ✅ | **Support schemas CA, CB, CC** | Basic unencrypted schema support | v0.1.0 |
+| ✅ | **Support schema CE** | Encrypted DCM files with Blowfish decryption | v1.0.0 |
+| ✅ | **Convert to STL, PLY, OBJ** | Mesh export via Assimp library | v0.1.0 |
+| ✅ | **Read mesh colors** | Per-vertex color data extraction | v1.1.0 |
+| ✅ | **Read UV mapping and textures** | Texture coordinate and mapping support | v1.1.0 |
+| 🚧 | **Read extra curves** | Spline and annotation data | Planned |
 
-1. ✅ **Read and extract mesh geometry** (vertices and triangles) from DCM files - **Done** 
-   - Supports schemas CA, CB, CC
-2.  ✅ Now support schema CE (encrypted) !!!. Since v1.0.0.
-3. ✅ **Convert to STL, PLY, OBJ** - **Done** (using Assimp)
-4. 🚧 **Read mesh colors** - To do
-5. 🚧 **Read UV mapping and textures** - To do
-6. 🚧 **Read extra curves** - To do
+### Not in Scope
+- Write DCM files
+- Read heavily encrypted files without decryption keys
 
-### Not part of the goals (at least initially)
-* Write DCM files
-* Read heavily encrypted files without key
+---
+
+## Algorithms for DCM Parsing
+
+Open3SDCM uses a multi-stage pipeline to parse DCM files. Each DCM file is a ZIP archive containing an HPS (Himsa Packed Scan) XML file with base64-encoded binary data.
+
+### Stage 1: File Extraction & XML Parsing
+
+```
+DCM File (ZIP archive)
+    ↓
+Unzip using Poco::Zip::Decompress
+    ↓
+Locate HPS XML file
+    ↓
+Parse with Poco::XML::DOMParser
+    ↓
+Extract:
+  - <Schema> element (CA, CB, CC, CE)
+  - <Properties> key/value pairs
+  - <Binary_data> container
+```
+
+### Stage 2: Binary Data Discovery
+
+The XML contains schema-specific elements (CA, CB, CC, CE) within `<Binary_data>`. The parser traverses child nodes sequentially (not using `getElementsByTagName` which returns all matches document-wide) to ensure correct node pairing:
+
+```
+<Binary_data>
+  ├── CA (or CB, CC, CE)
+  │   ├── Vertices (base64, vertex_count, check_value)
+  │   └── Facets (base64, facet_count, color)
+  └── ... additional geometry nodes
+```
+
+**Key Algorithm**: Sequential child node traversal ensures vertices and facets from the same geometry node are processed together.
+
+### Stage 3: Binary Data Processing Pipeline
+
+For each geometry node, the following pipeline executes:
+
+```
+Base64-encoded string
+    ↓
+detail::DecodeBuffer() - Base64 decode to raw bytes
+    ↓
+(CE schema only) Decrypt with Blowfish:
+    - Key derived from PackageLockList property via MD5
+    - OpenSSL EVP API for Blowfish-CBC
+    ↓
+Verify CRC32 checksum
+    - Compare computed checksum against check_value attribute
+    - Fail if mismatch (data corruption detected)
+    ↓
+Interpret raw bytes:
+```
+
+### Stage 4: Vertex Data Interpretation
+
+**Input**: Raw byte buffer (after base64 decode and optional decryption)
+**Output**: `std::vector<float>` in x,y,z order (3 floats = 1 vertex, 12 bytes)
+
+```cpp
+// CA Schema: Direct float3 interpretation
+for (size_t i = 0; i < vertexCount; ++i) {
+    float x = *reinterpret_cast<const float*>(data + offset);
+    float y = *reinterpret_cast<const float*>(data + offset + 4);
+    float z = *reinterpret_cast<const float*>(data + offset + 8);
+    m_Vertices.push_back(x);
+    m_Vertices.push_back(y);
+    m_Vertices.push_back(z);
+    offset += 12;
+}
+```
+
+### Stage 5: Facet (Triangle) Data Interpretation
+
+**Input**: Raw byte buffer with compressed triangle indices
+**Output**: `std::vector<Triangle>` with 0-based vertex indices
+
+The facet data uses a compressed encoding:
+- First byte: bitmask indicating which triangle vertices are new vs. reused
+- Following bytes: delta-encoded vertex indices
+
+```cpp
+// Decode triangle from compressed format
+uint8_t flagByte = *data++;
+Triangle tri;
+
+// Bit 0: vertex 0 is new (1) or reused (0)
+if (flagByte & 0x01) tri.v0 = readDeltaEncodedInt(data);
+else tri.v0 = previousVertex0;
+
+// Bit 1: vertex 1 is new (2) or reused (0)  
+if (flagByte & 0x02) tri.v1 = readDeltaEncodedInt(data);
+else tri.v1 = previousVertex1;
+
+// Bit 2: vertex 2 is new (4) or reused (0)
+if (flagByte & 0x04) tri.v2 = readDeltaEncodedInt(data);
+else tri.v2 = previousVertex2;
+```
+
+Delta encoding reads a variable-length integer:
+- Low 7 bits: value
+- High bit: continuation flag (1 = more bytes follow)
+- Repeats until high bit is 0
+
+### Stage 6: Color and Texture Data (v1.1.0+)
+
+**Per-vertex colors**: Stored as RGB or RGBA in separate binary nodes
+- Format: 3 or 4 bytes per vertex (0-255 range)
+- Normalized to float [0,1] during processing
+
+**UV coordinates**: Stored as float pairs per vertex
+- Format: 2 floats per vertex (u, v)
+- Stored in separate `<UV>` nodes
+
+**Texture mapping**: Texture images and mapping data in `<Texture>` nodes
+
+### Stage 7: Mesh Export
+
+```
+Parsed data:
+  - m_Vertices: std::vector<float> (x,y,z ordered)
+  - m_Triangles: std::vector<Triangle> (0-based indices)
+  - m_Colors: std::vector<Color> (optional, per-vertex)
+  - m_UVs: std::vector<UV> (optional, per-vertex)
+    ↓
+Build aiScene (Assimp data structure)
+    ↓
+aiExportSceneToFile() with selected format:
+    - STL: Binary or ASCII triangle mesh
+    - PLY: ASCII or binary with optional colors
+    - OBJ: Wavefront format with UVs and materials
+```
+
+### CE Schema Decryption Algorithm
+
+For encrypted CE schema files:
+
+```
+1. Extract PackageLockList property from XML
+2. Derive decryption key:
+   - MD5 hash of PackageLockList string
+   - Truncate to 16 bytes for Blowfish key
+3. Initialize Blowfish-CBC context with:
+   - Key: MD5(PackageLockList)
+   - IV: Zero-initialized (8 bytes)
+4. Decrypt each binary buffer:
+   - Input: base64-decoded bytes
+   - Output: decrypted raw data
+   - Padding: PKCS#7 (standard OpenSSL padding)
+5. Verify CRC32 on decrypted data
+```
+
+---
 
 ## Building from Source
 
@@ -24,23 +181,23 @@ The project aims to provide a comprehensive solution for reading and converting 
 
 - **C++20 compatible compiler** (GCC 10+, Clang 12+, MSVC 2019+)
 - **CMake** 3.16 or higher
-- **vcpkg** (automatically installed by the build system)
+- **Git** (for submodules)
 
-The project uses vcpkg to manage dependencies automatically. The following libraries will be installed:
+The project uses vcpkg to manage dependencies automatically:
 - Boost (program_options, dynamic_bitset)
-- Poco (XML, Zip)
-- Assimp
-- fmt
-- spdlog
-- OpenSSL
+- Poco (XML, Zip, Util)
+- Assimp (mesh export)
+- fmt (formatting)
+- spdlog (logging)
+- OpenSSL (CE schema decryption)
 
 ### Build Instructions
 
 #### Linux / macOS
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/Open3SDCM.git
+# Clone with submodules
+git clone --recursive https://github.com/Nosenzor/Open3SDCM.git
 cd Open3SDCM
 
 # Configure with CMake (uses vcpkg preset)
@@ -55,8 +212,8 @@ cmake --build builds/ninja-release-vcpkg -j
 #### Windows
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/Open3SDCM.git
+# Clone with submodules
+git clone --recursive https://github.com/Nosenzor/Open3SDCM.git
 cd Open3SDCM
 
 # Configure with CMake
@@ -68,14 +225,20 @@ cmake --build builds/ninja-release-vcpkg --config Release
 # The executable will be in: builds\ninja-release-vcpkg\bin\Open3SDCMCLI.exe
 ```
 
-#### Alternative: Debug Build
+#### Debug Build
 
-For development with debug symbols:
+For development with debug symbols and tests:
 
 ```bash
-cmake -S . -B cmake-build-debug -DCMAKE_BUILD_TYPE=Debug
-cmake --build cmake-build-debug -j
+# With tests enabled
+cmake --preset ninja-release-vcpkg-tests
+cmake --build builds/ninja-release-vcpkg-tests -j
+
+# Run tests
+ctest --preset ninja-release-vcpkg-tests --output-on-failure
 ```
+
+---
 
 ## Usage
 
@@ -85,22 +248,18 @@ The CLI tool `Open3SDCMCLI` can convert DCM files in two modes:
 
 #### Single File Conversion
 
-Convert a single DCM file to your desired format:
-
 ```bash
 # Convert to STL
 ./Open3SDCMCLI -i input.dcm -o output_directory -f stl
 
-# Convert to PLY
+# Convert to PLY (with colors if available)
 ./Open3SDCMCLI -i input.dcm -o output_directory -f ply
 
-# Convert to OBJ
+# Convert to OBJ (with UVs and textures if available)
 ./Open3SDCMCLI -i input.dcm -o output_directory -f obj
 ```
 
 #### Batch Directory Conversion
-
-Convert all DCM files in a directory:
 
 ```bash
 # Convert all DCM files in a directory to STL
@@ -116,7 +275,7 @@ Convert all DCM files in a directory:
 # Example 1: Convert a single scan to STL
 ./Open3SDCMCLI -i TestData/Handle/HandleAngledLarge.dcm -o ./output -f stl
 
-# Example 2: Convert all DCM files in a folder to PLY
+# Example 2: Convert all DCM files in a folder to PLY (preserves colors)
 ./Open3SDCMCLI -i TestData/Scan-01 -o ./output -f ply
 
 # Example 3: Convert with full paths
@@ -128,65 +287,93 @@ Convert all DCM files in a directory:
 
 ### Command-line Options
 
-- `-i, --input <path>` : Input DCM file or directory containing DCM files (required)
-- `-o, --output_dir <path>` : Output directory for converted files (required)
-- `-f, --format <format>` : Output format: `stl`, `ply`, or `obj` (default: `stl`)
-- `-h, --help` : Display help message
+| Option | Description |
+|--------|-------------|
+| `-i, --input <path>` | Input DCM file or directory containing DCM files (required) |
+| `-o, --output_dir <path>` | Output directory for converted files (required) |
+| `-f, --format <format>` | Output format: `stl`, `ply`, or `obj` (default: `stl`) |
+| `-h, --help` | Display help message |
 
 ### Output
 
-The tool creates a timestamped subdirectory in the output directory (e.g., `2025-02-01-14-30-45/`) containing the converted files. The output filename preserves the original DCM filename with the new extension.
+The tool creates a timestamped subdirectory in the output directory (e.g., `2026-04-25-14-30-45/`) containing the converted files. The output filename preserves the original DCM filename with the new extension.
+
+---
 
 ## Technical Documentation
 
 ### DCM File Format
 
-DCM files are XML-based files containing 3D scan data. The internal format is called HPS (Himsa Packed Scan). Key components:
+DCM files are ZIP archives containing HPS (Himsa Packed Scan) XML files. The internal format uses base64-encoded binary data for geometry.
 
-- **Vertices**: Base64-encoded binary data (floats, 12 bytes per vertex)
-- **Facets**: Base64-encoded compressed triangle data
-- **Schema**: Indicates encoding type (CA, CB, CC, CE)
-  - CE schema uses Blowfish encryption
+**Key components:**
+- **Vertices**: Base64-encoded binary data (floats, 12 bytes per vertex: 4 bytes each for x, y, z)
+- **Facets**: Base64-encoded compressed triangle data (delta-encoded indices)
+- **Schema**: Indicates encoding type (CA, CB, CC = unencrypted; CE = encrypted with Blowfish)
+- **Properties**: Metadata including EKID, timestamps, etc.
+- **Colors**: Per-vertex RGB/RGBA data (optional)
+- **UV**: Texture coordinates (optional)
+- **Textures**: Texture images and mapping data (optional)
 
-Example DCM structure:
+**Example DCM structure:**
 
 ```xml
 <HPS version="1.0">
   <Packed_geometry>
     <Schema>CE</Schema>
+    <Properties>
+      <Property name="EKID" value="1"/>
+    </Properties>
     <Binary_data>
       <CE version="1.0">
-        <Vertices vertex_count="376" base64_encoded_bytes="4512">...</Vertices>
-        <Facets facet_count="748" base64_encoded_bytes="778">...</Facets>
+        <Vertices vertex_count="376" base64_encoded_bytes="4512" check_value="330137282">
+          ...base64 data...
+        </Vertices>
+        <Facets facet_count="748" base64_encoded_bytes="778" color="8421504">
+          ...base64 data...
+        </Facets>
       </CE>
     </Binary_data>
   </Packed_geometry>
+  <FacetMarks>...</FacetMarks>
+  <Annotations/>
+  <Objects/>
+  <Splines/>
 </HPS>
 ```
 
-For detailed format documentation, see:
-- [Packed Scan Standard](https://himsanoah.atlassian.net/wiki/spaces/AD/pages/1309803049/Packed+Scan+Standard)
-- [Format documentation PDF](Packed%20Scan%20Standard%20format%20501.pdf)
+### Format References
 
+- [Packed Scan Standard Documentation](https://himsanoah.atlassian.net/wiki/spaces/AD/pages/1309803049/Packed+Scan+Standard)
+- [Packed Scan Standard format 501 PDF](Packed%20Scan%20Standard%20format%20501.pdf)
 
+### Useful Links
 
-# Releases
+- [dcm2stl.appspot.com](https://dcm2stl.appspot.com/) - A web service that can convert DCM to STL for comparison
 
-## Creating a Release
+---
 
-### Method 1: Create a Git Tag (Automated)
+## Releases
+
+### Creating a Release
+
+#### Method 1: Create a Git Tag (Automated)
 
 1. Update the version in the `VERSION` file
 2. Commit your changes
 3. Create and push the matching tag:
+
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
-The GitHub Actions "Build and Publish Release" workflow will automatically build binaries for Linux, macOS, and Windows and create a release.
+The GitHub Actions "Build and Publish Release" workflow will automatically:
+- Build binaries for Linux, macOS, and Windows
+- Create a GitHub release
+- Upload all assets
 
-### Method 2: Manual Workflow Dispatch
+#### Method 2: Manual Workflow Dispatch
 
 You can trigger a release build without creating a tag:
 
@@ -196,47 +383,70 @@ You can trigger a release build without creating a tag:
 4. Choose the branch whose `VERSION` file you want to release
 5. Click "Run workflow"
 
-The workflow reads the version directly from the repository's `VERSION` file, making manual rebuilds consistent with tagged releases.
+The workflow reads the version directly from the repository's `VERSION` file.
+
+---
 
 ## Version Management
 
 The project version is managed in the `VERSION` file at the repository root. This version is automatically read by CMake and used for all subprojects (CLI, Lib, TestTools).
 
-# Reading a DCM file (reverse engineering Documentation)
+**Current Version**: `1.1.0`
 
-DCM can be read with a text editor. It is a xml file. The internal file is called HPS.
-The leaves of the XML contain binary data that is encoded in base64.
-Thus vertices coordinates and triangles are encoded in base64.
+---
 
-```xml
-<HPS version="1.0">
-  <Packed_geometry>
-    <Schema>CE</Schema>
-    <Binary_data>
-      <CE version="1.0">
-        <Vertices vertex_count="376" base64_encoded_bytes="4512" check_value="330137282">Vy8uWErQoyGGm2JWrkMviYSPaR14kSSA8RP9/+fqzSt9YkPCpp4PwNVjyQT08YmaN4HKWti7hsJzjScb0XWEYxAZb86HQDaNspD0AzvKa1Oe5IhmfYK3be13YmsNy933qSuo/Czx/NCkVINNG21jC57wqwhvdrRwkY5LrRQS8WzpaA92k9xNZF1WnnLZagIrNtv+D5TC649Hh6dkcujohL9Ujxf0+eCDdjXn476F9rF2Xqi8mVqKryVJFJkSWkV0Ps8NESmT5w1+ldKLx4Vq9I6WYdzqOBE/lW4SBcbJK2ORk7v6JRoBIk5+GNPsyuClX/hHdOqpiZqalqn4sFOc/ZR+Icg/SPmzMfy2NBGaW0Lr4i1JMKRG9NJRfxtSVaywGyBMdpS5btpZlHi3kn1OanGv35/1N61qC4sxjPEehTw2o52sRcQIn6hdWe1icZgVMj3Uc10IikUZVpNAtr5c2M+auG1OnhbzaPpZeuh41mNg0rkPBKAneZ7wqwhvdrRwdpIFEe5FwDHsvSg/5deJ/7AkQixrf0VKn0B6VtgKwx8bK27nh0eV5nL4f4t12wzJ8IMqe9cJAfGjo8dq7L65YHcLObqm/3J54RrP1vG/eK8UUMgTYt26+o+ZROFfV2XPUf8LrzLnrtj6mXN4F68nK+XnYEAsCLaI+oSQ69DzreaY5ih70ggIoVMlrjdsPemTsIInGwi3n71F+/NASEB7IaWeeXn6NQLJVKRhgrTwVr8tf72O/esqsPoXU0g3deDRONtN1H0B35D62lhDQyGDpZTiiPVdi4kNkd4ijqh+FbmRptTN8gzX1MQGUuk1yoIGV14PapB2PAgeeDSdPocIT9JRfxtSVaywNEe5J2/af3kz0wVm+mEE3VMY/8SWJurLPSW0YV+7idv+Vvx8mdlGOrDfUfeGKGMlAzX7BDhtm2zDs6nL5dzsFCO1eSIJhi2qdJarwHFY51/yNs/M8497CPEXyNJtd91X71cDlq/pop9MjpL6snyJyiusm2dP+a0CNrVPVIsZYGrFTaTB4udc7l2V3PcfV+HZI6wZ2EAuZFoH9B+5QRmVyNqOk2LbOx2O5sbJXz2NoY1F+/NASEB7IcVTr/lp+xaXfJwS1D7bZ0/9DQtaF05dEkaX5OVaGaqvVCsNhUzEvyVQaxXCPWkAfs3idIZV21s3+Kz5GOKu2wjjxuqgzzHGvA25JivcNqJbn6j5OHYk39Pf+7WzjEtijCpnjhbn0IAPMvsnRYBiq2nYVTPw8EojFgTy6qon+8bj/WwYp9V0bgXM60NrMIdjN+ddCBTPnfuelxUnYeiXfuJzOQe0OtdrqMG3XpjsCMCWY8QvNxQ6BtRzOQe0OtdrqKmMjcgvJrKjbedJgN2Sg+G3JA+m1ug5rBPJZ9zqcO13U30eop4zynsJ8FIS5QCIz2LmixSENSdV85iKVW3byELD6lyukkstp2P0az2qTqpw1oBCG4Kaq6SGfVHMpBOeYdUZHPQ2SGja9leD6JAf9kyMP3LTQXOQHYf0zlMiaCjJpgbXlZgJ8g7KLPsLTDAAjdBNgP7CnoVvNl5mqwED+FRtAM0eXz1ZPOqSuHZgJ9G0B03qV4uhlKCVDDubWPwUb3ki7iguXE8UVlpjRgzpnS3cryIURE8Op9oZxtpMRqgovmceNRdcwwXaYYbOcvBC0uwIrzGq+KOvO/kzeCb+in1clZClizpYhBwJPBCzA3WcC0Un5XWYcYDYVTPw8EojFlMlrjdsPemTF72N5DY9s4KzSO9Tsn6L7oXU4lh8zhPr2IUJKh8nVn0ESgOTxLZCNewXNbdf4qgjxr+oVyddOxMESgOTxLZCNTLBpb5jmrWQqpoUfGUv7BTb2OG46s2TuHbo5jU018+LHdteGzGBi69IK88BMbEv3F4ka9sfI3WY5F9Km/fyWF/hWfXeDDy+GraZbBC603MdA0UZgX3NHXKool/ud2w1ZBp/w3anORu4oZrmNAsJETgnzzaJ6W/PGhiQZUuld+MCTSaU7dMBs4OE058xgOVAnzXXzuovctAlN6gED/0ro9DzsbEcCWlxbtrYcit6mKzCudYReeBE1+mHP2SVB11uj4FOGm4Ky1UkBN0Tmy/fzleEBvRlcyy7edivPmwAsejEonGWfBaJuW74RoA2YFuebCVufJZBHL3aXKhmn5cNXdbnNikIMtsnKkeeKKJ1+YB0L9/uvVvx2kvPhLJ2S8KBjiOrHIheJm0AgmKNd70tUpJclZClizpYhFmWr2Mk1JVmc6xVUPlw7lYnrOIg7duqldqOk2LbOx2OxfmEdj/eiIPhGWsr7mJxUdTnyGmOkyCJ60fPfmZ0WX1C+5TsCQTLDoNkR+7GORAQlxUnYeiXfuKP3Gtycjm1w/5I36pGTkwhY8QvNxQ6BtSP3Gtycjm1w1rp1Sx4zpPzbedJgN2Sg+EHTRexb+NN0oPxr73MoKXtbpNGuZ7rkajOEdrUdMQeFQ5aj3+c1uErLJf9JgRKaNlHSWzn+tPAPB9vug8zzPsveqWjdUFFxHk4dhfdP3+Bru+xoXe6LfIDFYIpLvGmz50lzyLywk+Qyr4tnJ+ZEVqVexYBWe5yCMEgOnEg9cXt43O3c9uqxtd8+cogao8ipZLK5S7PPlcwFgBF3MxAJVNG3hRvcGzcJ2rKE+NHqX40bC+1yvsBvo872PKOAq5pNds/uxn1K7ecw8i6at54Ang8zWjFKH/QZpIzU/tnecyIQiiUZznrV2Jc4pD61MLVdu5EcfMRhKm9Vp2bm2DnQ3iB/Y6gebiESemtcLGGDRmpS3AGu7B3IHSbtCG8G0cym2lclZClizpYhDYLue5vj2XiuftpLdvM6yknrOIg7duqlcN+SjxY6yiZMZnUm06nmxauppmwdtnAhLkJ2Xf0jgrHiB3vJjF2R/9ft3AHqY+pQ7hitwQDse9z+dUhG/Es2LJQTZWifdKRjuIE2AiCH2GbWPRAJK+tomNQTZWifdKRjrbN4s0x0MIijxiN3V+/zOfi91O0c62l6zxML9tDc3sMI4VrB+q6lEbyhhITUL2z4MU/KVKClFx1QnZR+CBWKsEw8ZA4o9s9qkhCgupL+SDv4+wP4HjjWOXv0OB3V9g6UK5Z/pfPfC2G3+pirG0fc3aA0WxKw+sotyyo83FKYGL5GZCQ5QggbKJKFRHwMjEAzhRQVBzAwtGtxAKZ84/1tahAxowz4HiXH7HEviWFj9fsWXcsq87/NHKQeEb6aQzoxSB0Lsr+9oXbyjsnKc88drjMrvtwmAq++fvnhfNVW+bzf+g56/cYUsS+WSWFdSGOUDUgqN0SK5WqJxUGBQ1Vd7W0WVHgv/Nr+tpAuLpHFu2UczsWGZpiCBBjC26si8gUEnfti1186YY6GbPDYNMr4JTvx6JM2rSPsmi4j3PPptt50BXjeqQvp1OCh3xdYu351j5TObZfKHDw58gD3Aneb5opKeiCOpamS9BNgP7CnoVvSEgGOj7TLOQyNNdH6HLAhVuBhhGbwt1ObbUdXyAeHl5hn2OLZ9jHLDFuwCGN6I0DDYXvFd77pK9n39h48AcrnznLU620E26enc/eIwvqdOIYrgcre5b9q0ElARQUQb2nUQQ3QIZFtI0Yrgcre5b9q1GKFFlxVmqEvE+u8RZEA6Ha3ALw9WlUUYJpsq1/eTZ9meU+SrxxR9XhqsmZdqTxHtBxAlFdypeobgAUi6xwNoenLOtqzzyb2jdrXsntXJAvIgL6pSWWZPujqI0NhlEuwrva4cDYm107R2xhtd8j5xKjMLCYC7jfV+NFaBZ+CcTjNxEfxJerRyb4OVZrpcGTrlHSqksaO0B6zKcBrkF+MIUV+oxFYR3c5k/O4Nvtkjm/lP8zVJ73+hI+Ea7hsDlbZ0yz8rl2iGF1ALWAScd2d89iTLUvxXA2rSdlGuFw/ojdFQ701gyY4Io5Z7LkUgXKFsYgay40tiHHO/kzeCb+in0Yl1zGNYKmOenF78RihgGuotibrFhJMRutcLGGDRmpSzLR1jO7wh8WSpD9KTcGRdNvpO9PvUAx1oxzoqMZVSK7lRqq2REOMj5HCM4UTk3L0GdiZ1/hVEuApqQWoiuy6ITIcfKoae2ZuObh3kpFh3K3VEMhFI6lLI66fzQH9BsemCd6XcqB7wrGfp+AFb6p0wgiGxLNiAY+ubAOVzVDGN08mzK9Cw6ge10V5xkLbou1sVSSp3KpsqkLgGThsc5Gk4o7+9oeQHeDRHfZ5/34CkW1QAyPyB6xxxleBItlIiaOmi76Rta+2SbZ6PSH59l8ZaxihHYdaCYw122Py4S8b0CccbKb0eS3NIh166vBm7RBYbgTuV8+LmlAFnQB64zaIVgSujBX/lorFC53yZ7WIVrRp2JAoj5eLXMDSiEnkQLytZYUkvygPUpxcopTP3GJ4nyX6MbdAgrIRs/o6+GPa7qtUkSr8YdeIQfIYKhl6OgS7mLB5JOO9t2szw57fp8M9U5crYFT3p8+Rs1uc7Ij+CV30BXjeqQvp1Pvx6JM2rSPsoU5WnYNbzbZPVk/D0myfWB/FESU1HwN4BN9hK9OQ1elegd9sMc+JeFWS4YrvhN7DrCYggEa81pnicntHupAgjtqPsL7jrDdFu0J2WcHpOIqJRx1DOO4qDOA99vhmLq3NQkGmXuEoqs3MK/SKKo0Ncklm0BjzQcSgRzvzZ0hew9moj/pSmwyfPhN8RLSHgUSDVfVf2Yg/mPuLRv1hgXKMhnu8gYs58zR9zev1ykIURowfs4u4mV2WsYjAdy2541IgapRgNqRovW0DqtuCczkMSX/31QhcT+Sfr9nHGyk9IL3HsZix3h2mhNM6oH2+BNXcbxqgbX/Ybw+Zstd2S9F7XrvtdwJ5wybehFgUWWtek+rVXb7KFvaHbruvyapA7M7m+2nFwfA7CusJOFlXrF28sFcrYFT3p8+Rmz5NlhrtVP/Yb4UDLAx4Wjvx6JM2rSPsubwHdWvonhB08wipKy0niBgC32FDNDtXZTeC5aNX5WAjvH1aU5qfTyiYFQtF4RNLrCopqfMqi7/dweYbH1G8VMKMlOmnKabJH6kkHAzoDwtgUNnudTW+uM0tKjmMFYpbrkdN63ZPRkD8HDg8WQhIMhSROvftcR/1KauAQFwFX69Ac/EJEzQ4Xk+ypoXRQ2YWOarH828CMIitiWQqyMR2wI2BfHO7C085BncsGtBwgLGSLDzOZv26wJbrm+O8USx5BncsGtBwgLG7WxsOXY1pgPIS08Ln2bFykPDATULmWiG8UdgVYI1T9nP/r3d3wf/HVlhfbqODBlgbFDb3PhgBg5crYFT3p8+RiNfYNaAP4QGPVk/D0myfWA06tfcGPeWIekpwO4b0xGjEH0KeY8WHn+PE+3DOVjaDJ2pwNG5K+2MQ8lzpyAP7xWVPrxyT13aB88saJhAJ6L37ncQk1C6RvKM7lMCX9MVp0I9W9pSTQQlM5O8yWpcuA+ejhsxfp3+CPAiVLNzsgYG9CVqVnZFDOh6WRokevFOITAY9vU/R5IH67NClellm45epaKX6lkxWxCx0A6mqh9hFTlgFZldH3L/YbAJaUY0NEElARQUQb2npj+oPrlZpm6NfHqr/vwGJaXyJeAYyO2SSeL15jK+PcFcrYFT3p8+RvMNYwP5vE9b08wipKy0niAyUkfoGG/nJvQnanhwyEPe9W6PH4mSqRXFVXMDgcJJSsmmWIxrAu7oOFVZTCcEfjJ7gNBzg5QW/IaVTmZeVESyuygOMFZAzsE1ZVAPNGqBn6auAQFwFX691LEUnn+g4/5Jh8xj1JM+2OarH828CMIighCWvYAcA4//YbAJaUY0NFbKfPGZQ/wT3GZz3WqAyuujKJiNFniDLt6ltOWPZN/6EdgkX+I7lkdCp92DlqgOBDnWuFGIoC0cZmDIWDvZxFL/M4HCo+NgFxb+mYYJ71QOgqS1I4346WeC1OhBTUZ3F/J0B0Xm5P0BC9UYfUFCvB/FRZ0Bpw/bxcNl8wsMzg0b</Vertices>
-        <Facets facet_count="748" base64_encoded_bytes="778" color="8421504">BAAAAAAAAAAAAAEAAAIAAAIAAAAAAgAAAAIAAAACAAECAAAAAgIAAAACAgAAAAAAAAICAAABAAICAAAAAAICAAECAgAAAQAAAQIAAAAAAgICAAAAAAAAAQACAgAAAAEAAgICAAAAAAACAgIAAQIAAQAAAAACAgIAAAAAAAICAgIAAAAAAAABAAAAAgICAAAAAQACAgICAAAAAAAAAgICAgABAgICAAABAAACAgIAAAAAAAACAgICAgAAAAAAAAABAAAAAgIAAQAAAAEAAgICAgIAAAAAAAAAAgICAgIAAQICAgAAAQAAAQICAgAAAAAAAAACAgICAgIAAAAAAAAAAAEAAAACAgABAAAAAQACAgICAgIAAAABAAAAAAICAgICAgABAgICAAABAQAAAgICAAAAAAAAAAACAgICAgIAAAAAAAAAAAABAAAAAAEAAQIAAAABAAICAgICAgIAAAAAAQAAAAICAgICAgIAAQICAgABAgABAAIAAQIAAAAAAAAAAAACAgICAgIAAAEAAAAAAAAAAQEAAAABAAIAAgIAAgICAgICAgIAAAEAAQAAAQABAgICAgICAAEAAQIAAQIAAAAH6wAAAAEBCQAAAAAAAAAAAQACAgICAAAAAQAAAAAAAAIAAAAAAQECAgACAgICAgICAgABAAAAAQABAAECAgICAgICBwoBAAABCQICAAEAAAEAAgAAAAAAAAEAAAACAgIAAAAAAQAAAAAAAAEAAAICAgACAgICAgICAgIAAQABAQIAAQICAgICAgICAgABAAEAAgAAAAAAAQAAAAIAAQAAAAEAAAAAAAEAAAICAAICAgICAgABAgc9AQAAAQkAAQICAgICAgICAgABAQACAAAAAAAAAAECAAAAAQAAAAABAAACAAICAgICAgABAAEBAgICAgICAgICAAIAAAACAAABAAAAAQAAAAEAAgACAgICAQABAgIAAQICAgICAAIAAgdxAQAAAAEAAQIAAAECAAICCQd2AQAAAQIHdAEAAAEJAgIAAgkBAQEBAQ==</Facets>
-      </CE>
-    </Binary_data>
-  </Packed_geometry>
-  <FacetMarks>QAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAA==</FacetMarks>
-  <Annotations/>
-  <Objects/>
-  <Splines/>
-  <Properties>
-    <Property name="EKID" value="1"/>
-  </Properties>
-</HPS>
+## Architecture
 
 ```
+Open3SDCM/
+├── Lib/              # Static library (Open3SDCMLib) - Core DCM parsing
+│   └── src/
+│       ├── ParseDcm.cpp    # Main parser implementation
+│       ├── ParseDcm.h      # Parser interface
+│       └── definitions.h   # Data structures (Triangle, Vertex, etc.)
+├── CLI/              # Command-line executable (Open3SDCMCLI)
+│   └── src/
+│       └── main.cpp        # CLI entry point
+├── TestTools/        # Test utilities
+│   └── src/
+│       └── RealWorldTest.cpp   # Regression tests with real DCM files
+├── TestData/         # Sample DCM input files for testing
+├── CMakeLists.txt    # Root CMake configuration
+├── CMakePresets.json # Build presets
+└── vcpkg.json        # Dependency manifest
+```
 
-A documentation of the HPS (Himsa Packed Scan) format can be found [here](https://himsanoah.atlassian.net/wiki/spaces/AD/pages/1309803049/Packed+Scan+Standard)
+### Namespace Convention
 
-Vertices are in float format (4 bytes per coordinates) thus 12 bytes per vertex.
+- **Public API**: `namespace Open3SDCM`
+- **Internal implementation**: `namespace Open3SDCM::detail` (in .cpp files)
 
+---
 
+## Code Quality
 
+- **Formatting**: LLVM clang-format style, 2-space indent, column limit 0 (no line length enforcement)
+- **Static Analysis**: Clang-tidy with bugprone-, modernize-, and performance- checks
+- **Sanitizers**: ASAN and UBSAN enabled in CI
+- **Testing**: ctest with CMake presets
 
-# Useful links
+Run `clang-format` before committing to ensure consistent style.
 
-* https://dcm2stl.appspot.com/ : A web service that can convert DCM to STL
+---
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Run `clang-format` on modified files
+5. Build and test locally
+6. Submit a pull request
+
+All contributions are welcome: bug reports, feature requests, documentation improvements, and code contributions.
+
+---
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
