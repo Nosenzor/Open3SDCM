@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 # set the project name
-project(Open3SDCMLib VERSION ${Open3SDCM_VERSION} LANGUAGES CXX)
+project(Open3SDCMLib LANGUAGES CXX)
 
 # specify the C++ standard
 set(CMAKE_CXX_STANDARD 20)
@@ -12,8 +12,7 @@ endif ()
 
 #find_package(Boost REQUIRED)
 find_package(Poco CONFIG REQUIRED COMPONENTS XML JSON Zip)
-find_package(boost_dynamic_bitset CONFIG REQUIRED)
-find_package(assimp CONFIG REQUIRED)
+find_package(Boost REQUIRED)
 find_package(OpenSSL REQUIRED)
 set(SOURCES
         src/ParseDcm.h
@@ -24,28 +23,17 @@ set(SOURCES
 
 add_library(${PROJECT_NAME} STATIC ${SOURCES})
 
-
-#  External include : this will filter Warnings from external libraries
-target_include_system_directories(${PROJECT_NAME} PRIVATE
-    ${Boost_INCLUDE_DIRS}
-
-    )
-
 set_property(TARGET ${PROJECT_NAME} PROPERTY POSITION_INDEPENDENT_CODE ON)
 
-
-target_link_system_libraries(${PROJECT_NAME} PRIVATE
-    ${Boost_LIBRARIES} Boost::dynamic_bitset Poco::Zip Poco::XML assimp::assimp OpenSSL::Crypto
+# Link libraries
+target_link_libraries(${PROJECT_NAME} PRIVATE
+    ${Boost_LIBRARIES}
+    Poco::Zip
+    Poco::XML
+    OpenSSL::Crypto
 )
 
 if(MSVC)
-  #    Disable warning C4251 (needs to have dll-interface to be used by clients)
-  message("DISABLE warning C4251 (needs to have dll-interface to be used by clients)")
-  target_compile_options(${PROJECT_NAME} PRIVATE "/wd4251;" )
-
-  message("DISABLE warning C4251 (needs to have dll-interface to be used by clients) + fp:strict")
-  target_compile_options(${PROJECT_NAME}
-      PRIVATE
-      "/wd4251;"
-      "/utf-8")
+  # Disable warning C4251 (needs to have dll-interface to be used by clients)
+  target_compile_options(${PROJECT_NAME} PRIVATE "/wd4251")
 endif()

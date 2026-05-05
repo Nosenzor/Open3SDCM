@@ -5,7 +5,7 @@
 #include "ParseDcm.h"
 #include "definitions.h"
 
-#include "boost/dynamic_bitset.hpp"
+// #include "boost/dynamic_bitset.hpp"
 #include <algorithm>
 #include <array>
 #include <deque>
@@ -37,11 +37,12 @@
 #include <Poco/Path.h>
 #include <Poco/XML/XMLException.h>
 
-#include <assimp/Exporter.hpp>
-#include <assimp/scene.h>
-#include <assimp/postprocess.h>
+// Assimp and fmt are not used in F3D build
+// #include <assimp/Exporter.hpp>
+// #include <assimp/scene.h>
+// #include <assimp/postprocess.h>
 
-#include <fmt/ostream.h>
+// #include <fmt/ostream.h>
 
 namespace fs = std::filesystem;
 
@@ -1314,7 +1315,7 @@ namespace Open3SDCM
 
       if (Poco::File file(filePath.string()); !file.exists())
       {
-        throw Poco::FileNotFoundException(fmt::format("File not found: {}", filePath.string()));
+        throw Poco::FileNotFoundException("File not found: " + filePath.string());
       }
 
       std::ifstream fileStream(filePath);
@@ -1396,33 +1397,33 @@ namespace Open3SDCM
     {
       auto NbVertices = detail::GetElemCount(BinaryNodes, "Vertices");
       auto NbFaces = detail::GetElemCount(BinaryNodes, "Facets");
-      fmt::print("Expected to get {} vertices\n", NbVertices);
-      fmt::print("Expected to get {} faces\n", NbFaces);
+      // fmt::print("Expected to get {} vertices\n", NbVertices);
+      // fmt::print("Expected to get {} faces\n", NbFaces);
 
       m_SurfaceData.baseColor = detail::ParseFacetBaseColor(BinaryNodes);
 
       //Parse vertices
       m_Vertices = detail::ParseVertices(BinaryNodes, schema, properties);
-      fmt::print(" {} floats ({} vertices) have been read from buffer\n", m_Vertices.size(), m_Vertices.size() / 3);
+      // fmt::print(" {} floats ({} vertices) have been read from buffer\n", m_Vertices.size(), m_Vertices.size() / 3);
       if (m_Vertices.size() != NbVertices * 3)
       {
-        fmt::print("Error: Expected to get {} floats but got {}\n", NbVertices * 3, m_Vertices.size());
+        // fmt::print("Error: Expected to get {} floats but got {}\n", NbVertices * 3, m_Vertices.size());
       }
       else
       {
-        fmt::print("Get Correct number of vertices\n");
+        // fmt::print("Get Correct number of vertices\n");
       }
 
       //Parse facets
       m_Triangles = detail::ParseFacets(BinaryNodes, schema, properties);
-      fmt::print(" {} triangles have been read from buffer\n", m_Triangles.size());
+      // fmt::print(" {} triangles have been read from buffer\n", m_Triangles.size());
       if (m_Triangles.size() != NbFaces)
       {
-        fmt::print("Error: Expected to get {} faces but got {}\n", NbFaces, m_Triangles.size());
+        // fmt::print("Error: Expected to get {} faces but got {}\n", NbFaces, m_Triangles.size());
       }
       else
       {
-        fmt::print("Get Correct number of faces\n");
+        // fmt::print("Get Correct number of faces\n");
       }
     }
     catch (const Poco::Exception& ex)
@@ -1435,7 +1436,7 @@ namespace Open3SDCM
   {
     if (m_Vertices.empty() || m_Triangles.empty())
     {
-      fmt::print("Error: No mesh data to export\n");
+      // fmt::print("Error: No mesh data to export\n");
       return false;
     }
 
@@ -1447,98 +1448,80 @@ namespace Open3SDCM
           m_Triangles[i].v2 >= numVertices ||
           m_Triangles[i].v3 >= numVertices)
       {
-        fmt::print("Warning: Triangle {} has invalid indices: ({}, {}, {}), max vertex index: {}\n",
-                   i, m_Triangles[i].v1, m_Triangles[i].v2, m_Triangles[i].v3, numVertices - 1);
+        // fmt::print("Warning: Triangle {} has invalid indices: ({}, {}, {}), max vertex index: {}\n", i, m_Triangles[i].v1, m_Triangles[i].v2, m_Triangles[i].v3, numVertices - 1);
         invalidTriangles++;
       }
     }
 
     if (invalidTriangles > 0)
     {
-      fmt::print("Error: Found {} triangles with invalid indices. Cannot export.\n", invalidTriangles);
+      // fmt::print("Error: Found {} triangles with invalid indices. Cannot export.\n", invalidTriangles);
       return false;
     }
 
-    if (format == "ply")
-    {
-      const bool exported = detail::ExportPly(outputPath, m_Vertices, m_Triangles, m_SurfaceData);
-      if (!exported)
-      {
-        fmt::print("Error: Failed to export mesh to PLY\n");
-        return false;
-      }
+    // Export formats disabled for F3D
+    // if (format == "ply")
+    // {
+    //   const bool exported = detail::ExportPly(outputPath, m_Vertices, m_Triangles, m_SurfaceData);
+    //   if (!exported)
+    //   {
+    //     // fmt::print("Error: Failed to export mesh to PLY\n");
+    //     return false;
+    //   }
 
-      fmt::print("Successfully exported mesh to: {}\n", outputPath.string());
-      return true;
-    }
+    //   // fmt::print("Successfully exported mesh to: {}\n", outputPath.string());
+    //   return true;
+    // }
 
-    if (format == "obj")
-    {
-      const bool exported = detail::ExportObj(outputPath, m_Vertices, m_Triangles, m_SurfaceData);
-      if (!exported)
-      {
-        fmt::print("Error: Failed to export mesh to OBJ\n");
-        return false;
-      }
+    // if (format == "obj")
+    // {
+    //   const bool exported = detail::ExportObj(outputPath, m_Vertices, m_Triangles, m_SurfaceData);
+    //   if (!exported)
+    //   {
+    //     // fmt::print("Error: Failed to export mesh to OBJ\n");
+    //     return false;
+    //   }
 
-      fmt::print("Successfully exported mesh to: {}\n", outputPath.string());
-      return true;
-    }
+    //   // fmt::print("Successfully exported mesh to: {}\n", outputPath.string());
+    //   return true;
+    // }
 
-    aiScene* scene = new aiScene();
-    scene->mRootNode = new aiNode();
+    // Assimp export code disabled for F3D
+    // aiScene* scene = new aiScene();
+    // scene->mRootNode = new aiNode();
 
-    scene->mNumMeshes = 1;
-    scene->mMeshes = new aiMesh*[1];
-    aiMesh* mesh = new aiMesh();
-    scene->mMeshes[0] = mesh;
-    scene->mRootNode->mNumMeshes = 1;
-    scene->mRootNode->mMeshes = new unsigned int[1];
-    scene->mRootNode->mMeshes[0] = 0;
+    // scene->mNumMeshes = 1;
+    // scene->mMeshes = new aiMesh*[1];
+    // aiMesh* mesh = new aiMesh();
+    // scene->mMeshes[0] = mesh;
+    // scene->mRootNode->mNumMeshes = 1;
+    // scene->mRootNode->mMeshes = new unsigned int[1];
+    // scene->mRootNode->mMeshes[0] = 0;
 
-    mesh->mNumVertices = numVertices;
-    mesh->mVertices = new aiVector3D[mesh->mNumVertices];
-    for (size_t i = 0; i < mesh->mNumVertices; ++i)
-    {
-      mesh->mVertices[i].x = m_Vertices[i * 3 + 0];
-      mesh->mVertices[i].y = m_Vertices[i * 3 + 1];
-      mesh->mVertices[i].z = m_Vertices[i * 3 + 2];
-    }
+    // mesh->mNumVertices = numVertices;
+    // mesh->mVertices = new aiVector3D[mesh->mNumVertices];
+    // for (size_t i = 0; i < mesh->mNumVertices; ++i)
+    // {
+    //   mesh->mVertices[i].x = m_Vertices[i * 3 + 0];
+    //   mesh->mVertices[i].y = m_Vertices[i * 3 + 1];
+    //   mesh->mVertices[i].z = m_Vertices[i * 3 + 2];
+    // }
 
-    mesh->mNumFaces = m_Triangles.size();
-    mesh->mFaces = new aiFace[mesh->mNumFaces];
-    for (size_t i = 0; i < mesh->mNumFaces; ++i)
-    {
-      aiFace& face = mesh->mFaces[i];
-      face.mNumIndices = 3;
-      face.mIndices = new unsigned int[3];
-      face.mIndices[0] = m_Triangles[i].v1;
-      face.mIndices[1] = m_Triangles[i].v2;
-      face.mIndices[2] = m_Triangles[i].v3;
-    }
+    // mesh->mNumFaces = m_Triangles.size();
+    // mesh->mFaces = new aiFace[mesh->mNumFaces];
+    // for (size_t i = 0; i < mesh->mNumFaces; ++i)
+    // {
+    //   aiFace& face = mesh->mFaces[i];
+    //   face.mNumIndices = 3;
+    //   face.mIndices = new unsigned int[3];
+    //   face.mIndices[0] = m_Triangles[i].v1;
+    //   face.mIndices[1] = m_Triangles[i].v2;
+    //   face.mIndices[2] = m_Triangles[i].v3;
+    // }
 
-    scene->mNumMaterials = 1;
-    scene->mMaterials = new aiMaterial*[1];
-    scene->mMaterials[0] = new aiMaterial();
-    mesh->mMaterialIndex = 0;
-
-    std::string formatId = format;
-    if (format == "stl") formatId = "stl";
-    else if (format == "stlb") formatId = "stlb";
-
-    Assimp::Exporter exporter;
-    aiReturn result = exporter.Export(scene, formatId, outputPath.string(), 0);
-
-    delete scene;
-
-    if (result != AI_SUCCESS)
-    {
-      fmt::print("Error: Failed to export mesh - {}\n", exporter.GetErrorString());
-      return false;
-    }
-
-    fmt::print("Successfully exported mesh to: {}\n", outputPath.string());
-    return true;
+    // Assimp export disabled for F3D - export not supported
+    // All the scene/mesh setup and export code has been commented out
+    return false; // Export not supported in F3D build
   }
 
 }// namespace Open3SDCM
