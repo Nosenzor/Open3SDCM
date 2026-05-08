@@ -1469,32 +1469,31 @@ namespace Open3SDCM
       return false;
     }
 
-    // Export formats disabled for F3D
-    // if (format == "ply")
-    // {
-    //   const bool exported = detail::ExportPly(outputPath, m_Vertices, m_Triangles, m_SurfaceData);
-    //   if (!exported)
-    //   {
-    //     // fmt::print("Error: Failed to export mesh to PLY\n");
-    //     return false;
-    //   }
+    if (format == "ply")
+    {
+      const bool exported = detail::ExportPly(outputPath, m_Vertices, m_Triangles, m_SurfaceData);
+      if (!exported)
+      {
+        std::cerr << "Error: Failed to export mesh to PLY\n";
+        return false;
+      }
 
-    //   // fmt::print("Successfully exported mesh to: {}\n", outputPath.string());
-    //   return true;
-    // }
+      std::cout << "Successfully exported mesh to: " << outputPath.string() << "\n";
+      return true;
+    }
 
-    // if (format == "obj")
-    // {
-    //   const bool exported = detail::ExportObj(outputPath, m_Vertices, m_Triangles, m_SurfaceData);
-    //   if (!exported)
-    //   {
-    //     // fmt::print("Error: Failed to export mesh to OBJ\n");
-    //     return false;
-    //   }
+    if (format == "obj")
+    {
+      const bool exported = detail::ExportObj(outputPath, m_Vertices, m_Triangles, m_SurfaceData);
+      if (!exported)
+      {
+        std::cerr << "Error: Failed to export mesh to OBJ\n";
+        return false;
+      }
 
-    //   // fmt::print("Successfully exported mesh to: {}\n", outputPath.string());
-    //   return true;
-    // }
+      std::cout << "Successfully exported mesh to: " << outputPath.string() << "\n";
+      return true;
+    }
 
     // Assimp export code disabled for F3D
     // aiScene* scene = new aiScene();
