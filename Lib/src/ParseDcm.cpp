@@ -269,16 +269,15 @@ namespace Open3SDCM
 
     std::vector<unsigned char> GetBaseCeKey()
     {
-      const std::string b64 = "YcVXxo96nMEjV0yKboORSQ==";
+      const std::string b64 = "YcVXxg16HMEjV0yKbgMRSQ==";
       std::istringstream iss(b64);
       Poco::Base64Decoder decoder(iss);
       std::vector<unsigned char> obf(16);
-      decoder.read(static_cast<char*>(obf.data()), obf.size());
+      decoder.read(reinterpret_cast<char*>(obf.data()), static_cast<std::streamsize>(obf.size()));
       
-      std::vector<unsigned char> key(16);
       for (int i = 0; i < 16; ++i)
-        key[i] = obf[i] ^ 0x55;
-      return key;
+        obf[i] ^= 0x55;
+      return obf;
     }
 
     std::vector<unsigned char> BuildCeKey(const std::map<std::string, std::string>& props, const bool scramble)
