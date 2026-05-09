@@ -267,12 +267,22 @@ namespace Open3SDCM
       }
     }
 
+    std::vector<unsigned char> GetBaseCeKey()
+    {
+      const std::string b64 = "YcVXxg16HMEjV0yKbgMRSQ==";
+      std::istringstream iss(b64);
+      Poco::Base64Decoder decoder(iss);
+      std::vector<unsigned char> obf(16);
+      decoder.read(reinterpret_cast<char*>(obf.data()), static_cast<std::streamsize>(obf.size()));
+      
+      for (int i = 0; i < 16; ++i)
+        obf[i] ^= 0x55;
+      return obf;
+    }
+
     std::vector<unsigned char> BuildCeKey(const std::map<std::string, std::string>& props, const bool scramble)
     {
-      std::vector<unsigned char> key = {
-        0x34, 0x90, 0x02, 0x93, 0x58, 0x2F, 0x49, 0x94,
-        0x76, 0x02, 0x19, 0xDF, 0x3B, 0x56, 0x44, 0x1C
-      };
+      std::vector<unsigned char> key = GetBaseCeKey();
 
       std::string ekid = "1";
       const auto ekidIt = props.find("EKID");
@@ -1459,32 +1469,31 @@ namespace Open3SDCM
       return false;
     }
 
-    // Export formats disabled for F3D
-    // if (format == "ply")
-    // {
-    //   const bool exported = detail::ExportPly(outputPath, m_Vertices, m_Triangles, m_SurfaceData);
-    //   if (!exported)
-    //   {
-    //     // fmt::print("Error: Failed to export mesh to PLY\n");
-    //     return false;
-    //   }
+    if (format == "ply")
+    {
+      const bool exported = detail::ExportPly(outputPath, m_Vertices, m_Triangles, m_SurfaceData);
+      if (!exported)
+      {
+        std::cerr << "Error: Failed to export mesh to PLY\n";
+        return false;
+      }
 
-    //   // fmt::print("Successfully exported mesh to: {}\n", outputPath.string());
-    //   return true;
-    // }
+      std::cout << "Successfully exported mesh to: " << outputPath.string() << "\n";
+      return true;
+    }
 
-    // if (format == "obj")
-    // {
-    //   const bool exported = detail::ExportObj(outputPath, m_Vertices, m_Triangles, m_SurfaceData);
-    //   if (!exported)
-    //   {
-    //     // fmt::print("Error: Failed to export mesh to OBJ\n");
-    //     return false;
-    //   }
+    if (format == "obj")
+    {
+      const bool exported = detail::ExportObj(outputPath, m_Vertices, m_Triangles, m_SurfaceData);
+      if (!exported)
+      {
+        std::cerr << "Error: Failed to export mesh to OBJ\n";
+        return false;
+      }
 
-    //   // fmt::print("Successfully exported mesh to: {}\n", outputPath.string());
-    //   return true;
-    // }
+      std::cout << "Successfully exported mesh to: " << outputPath.string() << "\n";
+      return true;
+    }
 
     // Assimp export code disabled for F3D
     // aiScene* scene = new aiScene();
