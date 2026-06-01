@@ -8,6 +8,7 @@
 // #include "boost/dynamic_bitset.hpp"
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <deque>
 #include <cstdint>
 #include <cstring>
@@ -1311,6 +1312,78 @@ namespace Open3SDCM
       return output.good();
     }
 
+    bool ExportStl(const fs::path& outputPath,
+                   const std::vector<float>& vertices,
+                   const std::vector<Open3SDCM::Triangle>& triangles)
+    {
+      if (!EnsureParentDirectoryExists(outputPath))
+      {
+        return false;
+      }
+
+      std::ofstream output(outputPath, std::ios::binary);
+      if (!output)
+      {
+        return false;
+      }
+
+      const std::size_t numVertices = vertices.size() / 3;
+      const std::size_t numTriangles = triangles.size();
+
+      // STL header (80 bytes)
+      std::string header = "Open3SDCM STL Export";
+      header.resize(80, ' ');
+      output.write(header.c_str(), 80);
+
+      // Number of triangles (4 bytes, little-endian)
+      uint32_t triangleCount = static_cast<uint32_t>(numTriangles);
+      output.write(reinterpret_cast<const char*>(&triangleCount), sizeof(triangleCount));
+
+      // Write each triangle (50 bytes per triangle)
+      for (const auto& triangle : triangles)
+      {
+        // Normal vector (3 floats, 12 bytes) - calculate from vertices
+        const float* v1 = &vertices[triangle.v1 * 3];
+        const float* v2 = &vertices[triangle.v2 * 3];
+        const float* v3 = &vertices[triangle.v3 * 3];
+
+        // Calculate normal using cross product
+        float edge1[3] = {v2[0] - v1[0], v2[1] - v1[1], v2[2] - v1[2]};
+        float edge2[3] = {v3[0] - v1[0], v3[1] - v1[1], v3[2] - v1[2]};
+        float normal[3] = {
+          edge1[1] * edge2[2] - edge1[2] * edge2[1],
+          edge1[2] * edge2[0] - edge1[0] * edge2[2],
+          edge1[0] * edge2[1] - edge1[1] * edge2[0]
+        };
+
+        // Normalize normal
+        float length = std::sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
+        if (length > 0)
+        {
+          normal[0] /= length;
+          normal[1] /= length;
+          normal[2] /= length;
+        }
+
+        output.write(reinterpret_cast<const char*>(normal), sizeof(float) * 3);
+
+        // Vertex 1 (3 floats, 12 bytes)
+        output.write(reinterpret_cast<const char*>(v1), sizeof(float) * 3);
+
+        // Vertex 2 (3 floats, 12 bytes)
+        output.write(reinterpret_cast<const char*>(v2), sizeof(float) * 3);
+
+        // Vertex 3 (3 floats, 12 bytes)
+        output.write(reinterpret_cast<const char*>(v3), sizeof(float) * 3);
+
+        // Attribute byte count (2 bytes) - always 0
+        uint16_t attributeCount = 0;
+        output.write(reinterpret_cast<const char*>(&attributeCount), sizeof(attributeCount));
+      }
+
+      return output.good();
+    }
+
   }// namespace detail
 
   void DCMParser::ParseDCM(const fs::path& filePath)
@@ -1495,42 +1568,21 @@ namespace Open3SDCM
       return true;
     }
 
-    // Assimp export code disabled for F3D
-    // aiScene* scene = new aiScene();
-    // scene->mRootNode = new aiNode();
+    if (format == "stl")
+    {
+      const bool exported = detail::ExportStl(outputPath, m_Vertices, m_Triangles);
+      if (!exported)
+      {
+        std::cerr << "Error: Failed to export mesh to STL\n";
+        return false;
+      }
 
-    // scene->mNumMeshes = 1;
-    // scene->mMeshes = new aiMesh*[1];
-    // aiMesh* mesh = new aiMesh();
-    // scene->mMeshes[0] = mesh;
-    // scene->mRootNode->mNumMeshes = 1;
-    // scene->mRootNode->mMeshes = new unsigned int[1];
-    // scene->mRootNode->mMeshes[0] = 0;
+      std::cout << "Successfully exported mesh to: " << outputPath.string() << "\n";
+      return true;
+    }
 
-    // mesh->mNumVertices = numVertices;
-    // mesh->mVertices = new aiVector3D[mesh->mNumVertices];
-    // for (size_t i = 0; i < mesh->mNumVertices; ++i)
-    // {
-    //   mesh->mVertices[i].x = m_Vertices[i * 3 + 0];
-    //   mesh->mVertices[i].y = m_Vertices[i * 3 + 1];
-    //   mesh->mVertices[i].z = m_Vertices[i * 3 + 2];
-    // }
-
-    // mesh->mNumFaces = m_Triangles.size();
-    // mesh->mFaces = new aiFace[mesh->mNumFaces];
-    // for (size_t i = 0; i < mesh->mNumFaces; ++i)
-    // {
-    //   aiFace& face = mesh->mFaces[i];
-    //   face.mNumIndices = 3;
-    //   face.mIndices = new unsigned int[3];
-    //   face.mIndices[0] = m_Triangles[i].v1;
-    //   face.mIndices[1] = m_Triangles[i].v2;
-    //   face.mIndices[2] = m_Triangles[i].v3;
-    // }
-
-    // Assimp export disabled for F3D - export not supported
-    // All the scene/mesh setup and export code has been commented out
-    return false; // Export not supported in F3D build
+    std::cerr << "Error: Unsupported export format: " << format << "\n";
+    return false;
   }
 
 }// namespace Open3SDCM
