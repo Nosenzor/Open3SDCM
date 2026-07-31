@@ -74,6 +74,7 @@ jobs:
         with:
           vcpkgDirectory: '${{ github.workspace }}/vcpkg'
           vcpkgJsonGlob: '**/vcpkg.json'
+          vcpkgJsonIgnores: "['**/vcpkg/**', '**/ports/**']"
         env:
           VCPKG_FORCE_SYSTEM_BINARIES: ${{ runner.os == 'Linux' && '1' || '' }}
           VCPKG_DEFAULT_TRIPLET: ${{ runner.os == 'Windows' && 'x64-windows' || '' }}
@@ -140,6 +141,7 @@ jobs:
         with:
           vcpkgDirectory: '${{ github.workspace }}/vcpkg'
           vcpkgJsonGlob: '**/vcpkg.json'
+          vcpkgJsonIgnores: "['**/vcpkg/**', '**/ports/**']"
         env:
           VCPKG_FORCE_SYSTEM_BINARIES: 1
 
