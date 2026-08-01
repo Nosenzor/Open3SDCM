@@ -144,6 +144,68 @@ class TestCalculator:
             sut.divide(10, 0)
 ```
 
+### C++ (Boost.Test)
+
+Boost.Test has no built-in parameterization comparable to the frameworks above,
+so drive a shared helper from a table of cases and register each one separately.
+That keeps a single failure reportable and re-runnable on its own.
+
+```cpp
+#include <boost/test/included/unit_test.hpp>
+
+namespace
+{
+  struct DivideCase
+  {
+    const char* name;
+    int numerator;
+    int denominator;
+    int expected;
+  };
+
+  constexpr std::array<DivideCase, 3> k_Cases{{
+      {"exact", 6, 3, 2},
+      {"truncates", 7, 2, 3},
+      {"negative", -6, 3, -2},
+  }};
+
+  void runDivideCase(const DivideCase& testCase)
+  {
+    Calculator calculator;
+    BOOST_TEST_CONTEXT(testCase.name)
+    {
+      BOOST_TEST(calculator.divide(testCase.numerator, testCase.denominator) == testCase.expected);
+    }
+  }
+}// namespace
+
+BOOST_AUTO_TEST_SUITE(CalculatorDivide)
+
+BOOST_AUTO_TEST_CASE(Exact) { runDivideCase(k_Cases[0]); }
+BOOST_AUTO_TEST_CASE(Truncates) { runDivideCase(k_Cases[1]); }
+BOOST_AUTO_TEST_CASE(Negative) { runDivideCase(k_Cases[2]); }
+
+BOOST_AUTO_TEST_CASE(DivideByZeroThrows)
+{
+  Calculator calculator;
+  BOOST_CHECK_THROW(calculator.divide(10, 0), std::domain_error);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
+```
+
+Prefer `BOOST_TEST` over `BOOST_CHECK_EQUAL`: it reports both operands on
+failure. Use `BOOST_TEST_CONTEXT` to say which case failed, and `BOOST_REQUIRE*`
+rather than `BOOST_CHECK*` when continuing after the failure would only produce
+noise (for example, after asserting a container is non-empty before indexing it).
+
+Register each case in CMake so it can be run individually:
+
+```cmake
+add_test(NAME Calculator_Divide_Exact
+    COMMAND CalculatorTest --run_test=CalculatorDivide/Exact --log_level=message)
+```
+
 ## Output Requirements
 
 - Tests must be **complete and buildable** with no placeholder code

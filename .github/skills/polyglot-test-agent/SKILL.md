@@ -1,161 +1,130 @@
 ---
 name: polyglot-test-agent
-description: 'Generates comprehensive, workable unit tests for any programming language using a multi-agent pipeline. Use when asked to generate tests, write unit tests, improve test coverage, add test coverage, create test files, or test a codebase. Supports C#, TypeScript, JavaScript, Python, Go, Rust, Java, and more. Orchestrates research, planning, and implementation phases to produce tests that compile, pass, and follow project conventions.'
+description: 'Generate unit tests that compile, pass, and match existing project conventions. Use when asked to generate tests, write unit tests, improve or add test coverage, create test files, or test a codebase. Covers this repository''s C++ (Boost.Test via CTest) and Python (pytest) suites, and adapts to other languages by first discovering how the project already tests.'
 ---
 
-# Polyglot Test Generation Skill
+# Test Generation
 
-An AI-powered skill that generates comprehensive, workable unit tests for any programming language using a coordinated multi-agent pipeline.
+Add tests that build, pass, and look like the ones already in the repository.
 
 ## When to Use This Skill
 
-Use this skill when you need to:
-- Generate unit tests for an entire project or specific files
-- Improve test coverage for existing codebases
-- Create test files that follow project conventions
-- Write tests that actually compile and pass
-- Add tests for new features or untested code
+- Generating tests for a file, module, or whole component
+- Raising coverage on existing code
+- Adding tests alongside a new feature or a bug fix
 
-## How It Works
+## Workflow
 
-This skill coordinates multiple specialized agents in a **Research → Plan → Implement** pipeline:
+Work through these phases yourself, in order. Do not skip discovery: tests that
+ignore existing conventions get rejected in review even when they pass.
 
-### Pipeline Overview
+### 1. Discover
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     TEST GENERATOR                          │
-│  Coordinates the full pipeline and manages state            │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-        ┌─────────────┼─────────────┐
-        ▼             ▼             ▼
-┌───────────┐  ┌───────────┐  ┌───────────────┐
-│ RESEARCHER│  │  PLANNER  │  │  IMPLEMENTER  │
-│           │  │           │  │               │
-│ Analyzes  │  │ Creates   │  │ Writes tests  │
-│ codebase  │→ │ phased    │→ │ per phase     │
-│           │  │ plan      │  │               │
-└───────────┘  └───────────┘  └───────┬───────┘
-                                      │
-                    ┌─────────┬───────┼───────────┐
-                    ▼         ▼       ▼           ▼
-              ┌─────────┐ ┌───────┐ ┌───────┐ ┌───────┐
-              │ BUILDER │ │TESTER │ │ FIXER │ │LINTER │
-              │         │ │       │ │       │ │       │
-              │ Compiles│ │ Runs  │ │ Fixes │ │Formats│
-              │ code    │ │ tests │ │ errors│ │ code  │
-              └─────────┘ └───────┘ └───────┘ └───────┘
-```
+Before writing anything, establish:
 
-## Step-by-Step Instructions
+- **Which suite the code belongs to.** Changes under `Lib/`, `CLI/` or
+  `TestTools/` are C++; changes under `python/` are Python.
+- **How similar code is already tested.** Read the nearest existing test file
+  and copy its structure, naming, and assertion style.
+- **How to build and run that suite** (commands below).
+- **What the code actually does.** Read the implementation. Do not infer
+  behaviour from a function's name.
 
-### Step 1: Determine the User Request
+### 2. Plan
 
-Make sure you understand what user is asking and for what scope.
-When the user does not express strong requirements for test style, coverage goals, or conventions, source the guidelines from [references/unit-test-generation.md](references/unit-test-generation.md). This prompt provides best practices for discovering conventions, parameterization strategies, coverage goals (aim for 80%), and language-specific patterns.
+List the cases you intend to cover before writing them, grouped by the file
+under test:
 
-### Step 2: Invoke the Test Generator
+- Happy path with representative input
+- Edge cases: empty input, boundaries, first and last element, absent optional data
+- Error paths: invalid input, missing files, malformed data
 
-Start by calling the `polyglot-test-generator` agent with your test generation request:
+Prefer a few sharp tests over many shallow ones. A test that cannot fail is
+worse than no test, because it reads as coverage.
 
-```
-Generate unit tests for [path or description of what to test], following the [references/unit-test-generation.md](references/unit-test-generation.md) guidelines
-```
+### 3. Implement
 
-The Test Generator will manage the entire pipeline automatically.
+Write the tests, then **build and run them**. Iterate until they pass.
 
-### Step 3: Research Phase (Automatic)
+Assertions must be specific: check the value, not just that a call returned.
+Where a fixture is large, assert against numbers derived from the source data
+rather than from a previous run of the code under test — otherwise the test
+locks in whatever the code currently does, bugs included.
 
-The `polyglot-test-researcher` agent analyzes your codebase to understand:
-- **Language & Framework**: Detects C#, TypeScript, Python, Go, Rust, Java, etc.
-- **Testing Framework**: Identifies MSTest, xUnit, Jest, pytest, go test, etc.
-- **Project Structure**: Maps source files, existing tests, and dependencies
-- **Build Commands**: Discovers how to build and test the project
+### 4. Verify
 
-Output: `.testagent/research.md`
+A change is not finished until:
 
-### Step 4: Planning Phase (Automatic)
+- The suite builds with no new warnings
+- Every new test passes, and the rest of the suite still passes
+- No test is skipped, commented out, or left as a stub to make the run green
 
-The `polyglot-test-planner` agent creates a structured implementation plan:
-- Groups files into logical phases (2-5 phases typical)
-- Prioritizes by complexity and dependencies
-- Specifies test cases for each file
-- Defines success criteria per phase
+If a test cannot be made to pass, say so and explain why. Do not weaken the
+assertion until it passes.
 
-Output: `.testagent/plan.md`
+## This Repository
 
-### Step 5: Implementation Phase (Automatic)
+### C++ — Boost.Test, driven by CTest
 
-The `polyglot-test-implementer` agent executes each phase sequentially:
+Tests live in `TestTools/src/` and are registered in `TestTools/CMakeLists.txt`.
+They use header-only Boost.Test:
 
-1. **Read** source files to understand the API
-2. **Write** test files following project patterns
-3. **Build** using the `polyglot-test-builder` subagent to verify compilation
-4. **Test** using the `polyglot-test-tester` subagent to verify tests pass
-5. **Fix** using the `polyglot-test-fixer` subagent if errors occur
-6. **Lint** using the `polyglot-test-linter` subagent for code formatting
+```cpp
+#include <boost/test/included/unit_test.hpp>
 
-Each phase completes before the next begins, ensuring incremental progress.
+BOOST_AUTO_TEST_SUITE(RealWorldConversion)
 
-### Coverage Types
-- **Happy path**: Valid inputs produce expected outputs
-- **Edge cases**: Empty values, boundaries, special characters
-- **Error cases**: Invalid inputs, null handling, exceptions
+BOOST_AUTO_TEST_CASE(ConvertScan040) { runConversionTest(k_Scans[0]); }
 
-## State Management
-
-All pipeline state is stored in `.testagent/` folder:
-
-| File | Purpose |
-|------|---------|
-| `.testagent/research.md` | Codebase analysis results |
-| `.testagent/plan.md` | Phased implementation plan |
-| `.testagent/status.md` | Progress tracking (optional) |
-
-## Examples
-
-### Example 1: Full Project Testing
-```
-Generate unit tests for my Calculator project at C:\src\Calculator
+BOOST_AUTO_TEST_SUITE_END()
 ```
 
-### Example 2: Specific File Testing
-```
-Generate unit tests for src/services/UserService.ts
-```
+Each case is also registered individually so it can be run on its own:
 
-### Example 3: Targeted Coverage
-```
-Add tests for the authentication module with focus on edge cases
+```cmake
+add_test(NAME RealWorld_scan_040
+    COMMAND RealWorldTest --run_test=RealWorldConversion/ConvertScan040 --log_level=message)
 ```
 
-## Agent Reference
+Build and run:
 
-| Agent | Purpose | Tools |
-|-------|---------|-------|
-| `polyglot-test-generator` | Coordinates pipeline | runCommands, codebase, editFiles, search, runSubagent |
-| `polyglot-test-researcher` | Analyzes codebase | runCommands, codebase, editFiles, search, fetch, runSubagent |
-| `polyglot-test-planner` | Creates test plan | codebase, editFiles, search, runSubagent |
-| `polyglot-test-implementer` | Writes test files | runCommands, codebase, editFiles, search, runSubagent |
-| `polyglot-test-builder` | Compiles code | runCommands, codebase, search |
-| `polyglot-test-tester` | Runs tests | runCommands, codebase, search |
-| `polyglot-test-fixer` | Fixes errors | runCommands, codebase, editFiles, search |
-| `polyglot-test-linter` | Formats code | runCommands, codebase, search |
+```bash
+cmake --preset ninja-release-vcpkg-tests
+cmake --build builds/ninja-release-vcpkg-tests -j
+ctest --preset ninja-release-vcpkg-tests --output-on-failure
+```
 
-## Requirements
+Sample scans for fixtures are in `TestData/`. Prefer the small ones
+(`TestData/Hole3x5/`, `TestData/Handle/`) — the `real-world/` scans are several
+megabytes and slow the suite down.
 
-- Project must have a build/test system configured
-- Testing framework should be installed (or installable)
-- VS Code with GitHub Copilot extension
+### Python — pytest
 
-## Troubleshooting
+Tests live in `python/tests/` and exercise the compiled bindings, so the
+package must be installed first:
 
-### Tests don't compile
-The `polyglot-test-fixer` agent will attempt to resolve compilation errors. Check `.testagent/plan.md` for the expected test structure.
+```bash
+pip install -e ".[test]"
+python -m pytest python/tests -q
+```
 
-### Tests fail
-Review the test output and adjust test expectations. Some tests may require mocking dependencies.
+Conventions in that suite worth following:
 
-### Wrong testing framework detected
-Specify your preferred framework in the initial request: "Generate Jest tests for..."
+- Parametrize over the sample scans rather than duplicating a test per file
+- Expected counts come from the DCM XML attributes (`vertex_count`,
+  `facet_count`, `color`), so tests check the bindings against the source data
+  instead of against themselves
+- `scan_path()` skips cleanly when `TestData/` is absent, so the suite still
+  runs from an installed wheel
+
+### Other languages
+
+Nothing else is currently tested here. If that changes, discover the existing
+setup first — test location, naming, framework, and runner — and follow it
+rather than introducing a second convention.
+
+## References
+
+- [references/unit-test-generation.md](references/unit-test-generation.md) —
+  detailed guidance on parameterization, coverage targets, and per-language
+  patterns.
