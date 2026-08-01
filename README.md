@@ -9,7 +9,7 @@ An open-source C++20 library and CLI tool for converting 3Shape DCM files to sta
 | ✅ | **Read mesh geometry** | Extract vertices and triangles from DCM files | v0.1.0 |
 | ✅ | **Support schemas CA, CB, CC** | Basic unencrypted schema support | v0.1.0 |
 | ✅ | **Support schema CE** | Encrypted DCM files with Blowfish decryption | v1.0.0 |
-| ✅ | **Convert to STL, PLY, OBJ** | Mesh export via Assimp library | v0.1.0 |
+| ✅ | **Convert to STL, PLY, OBJ** | Native writers, no external mesh library | v0.1.0 |
 | ✅ | **Read mesh colors** | Per-vertex color data extraction | v1.1.0 |
 | ✅ | **Read UV mapping and textures** | Texture coordinate and mapping support | v1.1.0 |
 | 🚧 | **Read extra curves** | Spline and annotation data | Planned |
@@ -146,12 +146,14 @@ Parsed data:
   - m_Colors: std::vector<Color> (optional, per-vertex)
   - m_UVs: std::vector<UV> (optional, per-vertex)
     ↓
-Build aiScene (Assimp data structure)
-    ↓
-aiExportSceneToFile() with selected format:
-    - STL: Binary or ASCII triangle mesh
-    - PLY: ASCII or binary with optional colors
-    - OBJ: Wavefront format with UVs and materials
+DCMParser::ExportMesh() dispatches on the requested format.
+Each writer is implemented directly in Lib/src/ParseDcm.cpp,
+so the library pulls in no external mesh dependency:
+    - STL (also "stlb"): binary triangle soup with facet normals.
+      The format carries no colour or UV, so both are dropped.
+    - PLY: ASCII; writes the mesh-wide tint as per-vertex colour.
+    - OBJ: Wavefront, with a companion .mtl and the extracted
+      texture image when the scan has one.
 ```
 
 ### CE Schema Decryption Algorithm
@@ -186,7 +188,7 @@ For encrypted CE schema files:
 The project uses vcpkg to manage dependencies automatically:
 - Boost (program_options, dynamic_bitset)
 - Poco (XML, Zip, Util)
-- Assimp (mesh export)
+- Assimp (reads meshes back in the comparison tests; not used for export)
 - fmt (formatting)
 - spdlog (logging)
 - OpenSSL (CE schema decryption)

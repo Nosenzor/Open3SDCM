@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import pathlib
 import shutil
+import struct
 import subprocess
 
 import numpy as np
@@ -69,6 +70,43 @@ def read_ascii_ply(path: pathlib.Path) -> tuple[np.ndarray, np.ndarray]:
     assert faces.shape == (n_faces, 3)
     assert vertex_properties >= 3
     return vertices, faces
+
+
+BINARY_STL_FACET = np.dtype([("normal", "<f4", 3), ("corners", "<f4", (3, 3)), ("attributes", "<u2")])
+BINARY_STL_HEADER_BYTES = 84  # 80-byte free-form header + uint32 triangle count
+
+
+def read_binary_stl(path: pathlib.Path) -> np.ndarray:
+    """Read a binary STL, checking the framing while doing so."""
+    raw = path.read_bytes()
+    assert len(raw) >= BINARY_STL_HEADER_BYTES, "file is too short to be a binary STL"
+
+    header = raw[:80]
+    assert not header.lstrip().startswith(b"solid"), (
+        "header starts with 'solid', which readers treat as an ASCII STL"
+    )
+
+    count = struct.unpack_from("<I", raw, 80)[0]
+    expected = BINARY_STL_HEADER_BYTES + 50 * count
+    assert len(raw) == expected, f"expected {expected} bytes for {count} triangles, got {len(raw)}"
+
+    return np.frombuffer(raw, dtype=BINARY_STL_FACET, count=count, offset=BINARY_STL_HEADER_BYTES)
+
+
+def run_cli_export(cli: pathlib.Path, source: pathlib.Path, out_dir: pathlib.Path, fmt: str) -> pathlib.Path:
+    """Convert a scan and return the file the CLI wrote."""
+    result = subprocess.run(
+        [str(cli), "-i", str(source), "-o", str(out_dir), "-f", fmt],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert result.returncode == 0, f"CLI failed: {result.stdout}\n{result.stderr}"
+
+    # The CLI writes into a timestamped subdirectory.
+    exported = list(out_dir.glob(f"*/{source.stem}.{fmt}"))
+    assert len(exported) == 1, f"expected one exported .{fmt}, found {exported}"
+    return exported[0]
 
 
 @pytest.mark.parametrize("relative,n_vertices,n_faces,_c,_t", SCANS)
@@ -136,19 +174,9 @@ def test_matches_cpp_cli_conversion(relative, _v, _f, _c, _t, tmp_path):
         pytest.skip("Open3SDCMCLI not built; set OPEN3SDCM_CLI to enable")
 
     source = scan_path(relative)
-    result = subprocess.run(
-        [str(cli), "-i", str(source), "-o", str(tmp_path), "-f", "ply"],
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-    assert result.returncode == 0, f"CLI failed: {result.stdout}\n{result.stderr}"
+    exported = run_cli_export(cli, source, tmp_path, "ply")
 
-    # The CLI writes into a timestamped subdirectory.
-    exported = list(tmp_path.glob(f"*/{source.stem}.ply"))
-    assert len(exported) == 1, f"expected one exported PLY, found {exported}"
-
-    cli_vertices, cli_faces = read_ascii_ply(exported[0])
+    cli_vertices, cli_faces = read_ascii_ply(exported)
     mesh = open3sdcm.load(source)
 
     assert cli_vertices.shape == mesh.vertices.shape
@@ -156,3 +184,62 @@ def test_matches_cpp_cli_conversion(relative, _v, _f, _c, _t, tmp_path):
     assert np.allclose(cli_vertices, mesh.vertices, rtol=PLY_FLOAT_RTOL), (
         "vertex positions differ from the CLI beyond PLY text precision"
     )
+
+
+@pytest.mark.parametrize("relative,_v,n_faces,_c,_t", SCANS)
+def test_cli_exports_stl_matching_the_source_geometry(relative, _v, n_faces, _c, _t, tmp_path):
+    """STL is the CLI's default format; it regressed to always failing once."""
+    cli = find_cli()
+    if cli is None:
+        pytest.skip("Open3SDCMCLI not built; set OPEN3SDCM_CLI to enable")
+
+    source = scan_path(relative)
+    facets = read_binary_stl(run_cli_export(cli, source, tmp_path, "stl"))
+    mesh = open3sdcm.load(source)
+
+    assert facets.shape[0] == n_faces
+    # STL is a triangle soup, so every corner must equal the indexed source
+    # vertex. Binary STL keeps full float32, so this is exact.
+    expected_corners = mesh.vertices[mesh.faces.astype(np.intp)]
+    assert np.array_equal(facets["corners"], expected_corners), "STL corners differ from source geometry"
+    assert (facets["attributes"] == 0).all()
+
+
+@pytest.mark.parametrize("relative,_v,_f,_c,_t", SCANS)
+def test_stl_normals_are_unit_length_and_follow_winding(relative, _v, _f, _c, _t, tmp_path):
+    cli = find_cli()
+    if cli is None:
+        pytest.skip("Open3SDCMCLI not built; set OPEN3SDCM_CLI to enable")
+
+    facets = read_binary_stl(run_cli_export(cli, scan_path(relative), tmp_path, "stl"))
+    normals, corners = facets["normal"], facets["corners"]
+
+    lengths = np.linalg.norm(normals, axis=1)
+    # A zero normal is the format's way of deferring to the vertex winding, and
+    # is legitimate for a degenerate facet; anything else must be normalised.
+    populated = lengths > 0
+    assert np.allclose(lengths[populated], 1.0, atol=1e-5), "normals are not unit length"
+
+    reference = np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0])
+    reference_lengths = np.linalg.norm(reference, axis=1, keepdims=True)
+    usable = populated & (reference_lengths.ravel() > 0)
+    reference[usable] /= reference_lengths[usable]
+    assert np.allclose(normals[usable], reference[usable], atol=1e-5), (
+        "normal orientation disagrees with the vertex winding"
+    )
+
+
+def test_cli_rejects_an_unsupported_format(tmp_path):
+    cli = find_cli()
+    if cli is None:
+        pytest.skip("Open3SDCMCLI not built; set OPEN3SDCM_CLI to enable")
+
+    result = subprocess.run(
+        [str(cli), "-i", str(scan_path("Hole3x5/Hole 3x5.dcm")), "-o", str(tmp_path), "-f", "gltf"],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+
+    assert "Unsupported output format" in (result.stdout + result.stderr)
+    assert not list(tmp_path.glob("*/*.gltf"))
