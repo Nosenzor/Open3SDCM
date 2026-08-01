@@ -105,6 +105,53 @@ jobs:
       - name: Run tests
         run: ctest --preset ninja-release-vcpkg-tests --output-on-failure
 
+      # The bindings reuse the vcpkg tree and the CLI this job already built,
+      # so installing and testing them here costs a compile of the extension
+      # rather than a fresh dependency build. Windows is covered by the wheels
+      # workflow instead: this job builds Poco/OpenSSL as DLLs, and Python 3.8+
+      # resolves extension dependencies via os.add_dll_directory rather than
+      # PATH, whereas the wheels build links them statically (x64-windows-static-md).
+      - name: Set up Python
+        if: runner.os != 'Windows'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python bindings
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          installed=$(find builds/ninja-release-vcpkg-tests/vcpkg_installed \
+                        -mindepth 1 -maxdepth 1 -type d ! -name vcpkg | head -1)
+          if [ -z "${installed}" ]; then
+            echo "::error::could not locate the vcpkg installed tree"
+            exit 1
+          fi
+          echo "Using vcpkg tree: ${installed}"
+          export CMAKE_ARGS="-DCMAKE_PREFIX_PATH=${PWD}/${installed} -DOPENSSL_ROOT_DIR=${PWD}/${installed}"
+          python -m pip install --upgrade pip
+          python -m pip install ".[test]"
+
+      - name: Verify the installed package imports and converts
+        if: runner.os != 'Windows'
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          python -c "
+          import open3sdcm
+          print('open3sdcm', open3sdcm.__version__)
+          v, f, c = open3sdcm.load(r'${{ github.workspace }}/TestData/Handle/HandleAngledLarge.dcm')
+          print('vertices', v.shape, v.dtype, '| faces', f.shape, f.dtype, '| color', c)
+          assert v.shape == (3776, 3) and f.shape == (7548, 3) and c == (128, 101, 108)
+          "
+
+      - name: Test Python bindings
+        if: runner.os != 'Windows'
+        shell: bash
+        run: python -m pytest python/tests -q
+
   sanitizers:
     name: Sanitizers / Linux
     runs-on: ubuntu-latest
