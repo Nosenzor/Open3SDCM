@@ -1,0 +1,28 @@
+{
+  "name": "open3sdcmlib",
+  "version": "1.1.2",
+  "description": "Library for parsing 3Shape DCM files and converting them to open 3D mesh formats (Open3SDCM core library, without the CLI).",
+  "homepage": "https://github.com/Nosenzor/Open3SDCM",
+  "license": "BSL-1.0",
+  "dependencies": [
+    "boost-headers",
+    "openssl",
+    {
+      "name": "poco",
+      "default-features": false,
+      "features": [
+        "json",
+        "xml",
+        "zip"
+      ]
+    },
+    {
+      "name": "vcpkg-cmake",
+      "host": true
+    },
+    {
+      "name": "vcpkg-cmake-config",
+      "host": true
+    }
+  ]
+}

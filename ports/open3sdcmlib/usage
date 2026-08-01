@@ -1,0 +1,4 @@
+open3sdcmlib provides CMake targets:
+
+    find_package(open3sdcmlib CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE Open3SDCM::Open3SDCMLib)

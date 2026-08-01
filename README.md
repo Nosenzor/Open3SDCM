@@ -240,6 +240,38 @@ ctest --preset ninja-release-vcpkg-tests --output-on-failure
 
 ---
 
+## Using Open3SDCMLib in Other Projects
+
+The DCM-parsing core (`Open3SDCMLib`) is a standalone CMake library — you don't need the CLI to use it. It exports a proper CMake package (`Open3SDCM::Open3SDCMLib`) and ships as a vcpkg port at [`ports/open3sdcmlib/`](ports/open3sdcmlib/).
+
+### As a vcpkg overlay port
+
+```bash
+vcpkg install open3sdcmlib --overlay-ports=/path/to/Open3SDCM/ports
+```
+
+```cmake
+find_package(open3sdcmlib CONFIG REQUIRED)
+target_link_libraries(your_target PRIVATE Open3SDCM::Open3SDCMLib)
+```
+
+> The port fetches a tagged release of this repository (`REPO Nosenzor/Open3SDCM`), so it only resolves once a release tag matching the port's `version` has been pushed to GitHub.
+
+### From a local install (without vcpkg's port machinery)
+
+```bash
+cmake -S Lib -B build-lib -DCMAKE_TOOLCHAIN_FILE=<vcpkg-root>/scripts/buildsystems/vcpkg.cmake
+cmake --build build-lib
+cmake --install build-lib --prefix /path/to/install
+```
+
+```cmake
+find_package(Open3SDCMLib CONFIG REQUIRED PATHS /path/to/install)
+target_link_libraries(your_target PRIVATE Open3SDCM::Open3SDCMLib)
+```
+
+---
+
 ## Usage
 
 ### Command Line Interface
@@ -393,6 +425,8 @@ The project version is managed in the `VERSION` file at the repository root. Thi
 
 **Current Version**: `1.1.0`
 
+`Open3SDCMLib` additionally carries its own CMake project version (set in [`Lib/CMakeLists.txt`](Lib/CMakeLists.txt)), used for its CMake package config and as the vcpkg port version in [`ports/open3sdcmlib/vcpkg.json`](ports/open3sdcmlib/vcpkg.json). Bump both when cutting a release that the vcpkg port should track.
+
 ---
 
 ## Architecture
@@ -400,10 +434,13 @@ The project version is managed in the `VERSION` file at the repository root. Thi
 ```
 Open3SDCM/
 ├── Lib/              # Static library (Open3SDCMLib) - Core DCM parsing
-│   └── src/
-│       ├── ParseDcm.cpp    # Main parser implementation
-│       ├── ParseDcm.h      # Parser interface
-│       └── definitions.h   # Data structures (Triangle, Vertex, etc.)
+│   ├── src/
+│   │   ├── ParseDcm.cpp    # Main parser implementation
+│   │   ├── ParseDcm.h      # Parser interface
+│   │   └── definitions.h   # Data structures (Triangle, Vertex, etc.)
+│   ├── cmake/
+│   │   └── Open3SDCMLibConfig.cmake.in   # CMake package config template
+│   └── CMakeLists.txt      # Builds + installs/exports Open3SDCM::Open3SDCMLib
 ├── CLI/              # Command-line executable (Open3SDCMCLI)
 │   └── src/
 │       └── main.cpp        # CLI entry point
@@ -411,9 +448,11 @@ Open3SDCM/
 │   └── src/
 │       └── RealWorldTest.cpp   # Regression tests with real DCM files
 ├── TestData/         # Sample DCM input files for testing
+├── ports/
+│   └── open3sdcmlib/ # vcpkg port packaging Lib/ as `open3sdcmlib`
 ├── CMakeLists.txt    # Root CMake configuration
 ├── CMakePresets.json # Build presets
-└── vcpkg.json        # Dependency manifest
+└── vcpkg.json        # Dependency manifest (whole repo build)
 ```
 
 ### Namespace Convention
@@ -449,4 +488,4 @@ All contributions are welcome: bug reports, feature requests, documentation impr
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Boost Software License 1.0 - see the [LICENSE](LICENSE) file for details.
