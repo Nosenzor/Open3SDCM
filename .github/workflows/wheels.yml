@@ -1,15 +1,15 @@
 name: Wheels
 
+# Not run on pull requests. Building Poco and OpenSSL from source across three
+# platforms is slow, and this workflow is not yet proven green -- gating PRs on
+# it would block unrelated work. Pull requests get their Python coverage from
+# the bindings steps in ci.yml, which install the package and run the full test
+# suite. Iterate on this workflow with workflow_dispatch until it is reliable,
+# then consider adding a pull_request trigger back.
 on:
   workflow_dispatch:
   push:
     tags: ['v*']
-  pull_request:
-    paths:
-      - 'python/**'
-      - 'Lib/**'
-      - 'pyproject.toml'
-      - '.github/workflows/wheels.yml'
 
 concurrency:
   group: wheels-${{ github.ref }}
@@ -61,8 +61,10 @@ jobs:
           restore-keys: vcpkg-${{ matrix.triplet }}-${{ env.VCPKG_COMMIT }}-
 
       - name: Build wheels
-        # Pinned to the commit behind v2.21.3: tags are mutable.
-        uses: pypa/cibuildwheel@7940a4c0e76eb2030e473a5f864f291f63ee879b # v2.21.3
+        # Pinned to the commit behind v4.1.1: tags are mutable. 2.21.3 pinned a
+        # manylinux image tag that no longer resolves ("No such image:
+        # quay.io/pypa/manylinux_2_28_x86_64:2024.10.07-1").
+        uses: pypa/cibuildwheel@4726cd35bb13f7bde50cf2761f2499ac7b3aa32c # v4.1.1
         env:
           # abi3 from 3.12 up (one wheel serves 3.12/3.13/3.14+); 3.9-3.11 need
           # version-specific wheels because the stable ABI predates 3.12.
@@ -87,10 +89,12 @@ jobs:
             VCPKG_DEFAULT_BINARY_CACHE=$PWD/.vcpkg-cache
             MACOSX_DEPLOYMENT_TARGET=${{ matrix.triplet == 'arm64-osx' && '11.0' || '10.15' }}
             CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=$PWD/.vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} -DVCPKG_MANIFEST_MODE=OFF"
+          # Forward slashes: CMake accepts them on Windows and they avoid a
+          # round of backslash escaping through the shell.
           CIBW_ENVIRONMENT_WINDOWS: >-
-            VCPKG_ROOT=$PWD\\.vcpkg
-            VCPKG_DEFAULT_BINARY_CACHE=$PWD\\.vcpkg-cache
-            CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=$PWD\\.vcpkg\\scripts\\buildsystems\\vcpkg.cmake -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} -DVCPKG_MANIFEST_MODE=OFF"
+            VCPKG_ROOT=$PWD/.vcpkg
+            VCPKG_DEFAULT_BINARY_CACHE=$PWD/.vcpkg-cache
+            CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=$PWD/.vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} -DVCPKG_MANIFEST_MODE=OFF"
 
           # TestData is excluded from the sdist/wheel, so point the suite at the
           # checkout and let it skip cleanly if the samples are absent.

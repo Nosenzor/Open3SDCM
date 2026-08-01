@@ -12,6 +12,23 @@ set -euo pipefail
 TRIPLET="${1:?expected a vcpkg triplet as the first argument}"
 ROOT="${2:?expected a root directory as the second argument}"
 
+# On Windows the caller hands us a native path (D:\a\...). Left as-is, bash
+# treats the backslash form as relative and silently prefixes the cwd, which
+# produced paths like D:\a\repo\D:\a\repo\.vcpkg\scripts\bootstrap.ps1.
+if command -v cygpath >/dev/null 2>&1; then
+  ROOT="$(cygpath -u "${ROOT}")"
+fi
+
+# vcpkg's macOS toolchain passes -isysroot "$SDKROOT". cibuildwheel does not
+# export SDKROOT into before_all, so the flag consumed the *next* argument as
+# its value (-isysroot -mmacosx-version-min=11.0) and no system header could
+# be found. Resolve it up front.
+if [ "$(uname -s)" = "Darwin" ] && [ -z "${SDKROOT:-}" ]; then
+  SDKROOT="$(xcrun --show-sdk-path)"
+  export SDKROOT
+  echo "SDKROOT=${SDKROOT}"
+fi
+
 VCPKG_COMMIT="${VCPKG_COMMIT:-efb1e7436979a30c4d3e5ab2375fd8e2e461d541}"
 VCPKG_DIR="${ROOT}/.vcpkg"
 CACHE_DIR="${ROOT}/.vcpkg-cache"
