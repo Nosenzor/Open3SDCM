@@ -38,12 +38,20 @@ VCPKG_BIN="${VCPKG_DIR}/vcpkg"
 [ -x "${VCPKG_BIN}" ] || VCPKG_BIN="${VCPKG_DIR}/vcpkg.exe"
 
 # Mirrors the find_package() calls in Lib/CMakeLists.txt.
+#
+# poco is requested without a feature list on purpose. At the baseline pinned
+# above, the poco port builds XML, JSON and Zip into the core package and does
+# not expose them as named features -- asking for poco[xml,json,zip] there fails
+# with "poco has no feature named zip". Newer vcpkg splits them out into
+# features instead, so the correct spelling depends on the baseline; plain
+# "poco" is what the repository's own vcpkg.json requests and what the C++ CI
+# already builds against. Revisit this if VCPKG_COMMIT moves forward.
 "${VCPKG_BIN}" install \
   --classic \
   --triplet "${TRIPLET}" \
   --x-buildtrees-root "${ROOT}/.vcpkg-bt" \
   --clean-after-build \
-  'poco[core,xml,json,zip]' \
+  poco \
   openssl \
   boost-headers
 
