@@ -272,6 +272,81 @@ target_link_libraries(your_target PRIVATE Open3SDCM::Open3SDCMLib)
 
 ---
 
+## Python Bindings
+
+`open3sdcm` exposes the parser to Python with numpy buffers, built with
+[nanobind](https://github.com/wjakob/nanobind).
+
+```bash
+pip install open3sdcm
+```
+
+```python
+import open3sdcm
+
+vertices, faces, color = open3sdcm.load("scan.dcm")
+
+vertices.shape, vertices.dtype   # ((95497, 3), dtype('float32'))
+faces.shape,    faces.dtype      # ((190206, 3), dtype('uint64'))  0-based indices
+color                            # (128, 128, 128)
+```
+
+`load()` returns a `Mesh`, which unpacks as `vertices, faces, color` but also
+exposes the rest of the scan:
+
+| Attribute | Type | Description |
+|---|---|---|
+| `vertices` | `(N, 3)` float32 | Vertex positions. Zero-copy view, read-only. |
+| `faces` | `(M, 3)` uint64 | Triangle vertex indices, 0-based. Zero-copy view, read-only. |
+| `color` | `(r, g, b)` or `None` | Single mesh-wide tint, 0-255. See the caveat below. |
+| `uv` | `(M*3, 2)` float32 or `None` | Texture coordinates, one row **per triangle corner**. NaN where undecoded. |
+| `texture` | `bytes` or `None` | Embedded texture, JPEG-encoded. |
+| `texture_size` | `(width, height)` or `None` | Pixel dimensions of `texture`. |
+| `path` | `Path` | Where the mesh was loaded from. |
+
+`vertices` and `faces` are true zero-copy views into the C++ buffers; the
+owning `Mesh` is kept alive by the arrays, so they stay valid even if you drop
+your reference to it.
+
+### About `color`
+
+**`color` is not a per-vertex or per-face buffer.** The DCM format stores a
+single `color` attribute on `<Facets>` for the entire mesh, and in practice it
+is very often the placeholder `(128, 128, 128)` — of the sample scans in this
+repository, six of eight carry exactly that value.
+
+Scans that hold real colour do so as an embedded texture. Use `uv` with
+`texture` to recover it:
+
+```python
+mesh = open3sdcm.load("scan.dcm")
+if mesh.texture is not None:
+    from PIL import Image        # not a dependency of open3sdcm
+    import io, numpy as np
+
+    image = np.asarray(Image.open(io.BytesIO(mesh.texture)))
+    height, width = image.shape[:2]
+    uv = mesh.uv                                   # one row per triangle corner
+    px = np.clip((uv[:, 0] * (width - 1)).astype(int), 0, width - 1)
+    py = np.clip(((1 - uv[:, 1]) * (height - 1)).astype(int), 0, height - 1)
+    corner_colors = image[py, px]                  # (M*3, 3) uint8
+```
+
+Note `uv` is indexed per *triangle corner*, matching `faces.reshape(-1)`, not
+per unique vertex — a vertex shared by several triangles can carry a different
+coordinate in each.
+
+### Building the bindings from source
+
+Requires the native dependencies (Poco, OpenSSL, Boost headers) to be
+discoverable by CMake, e.g. via vcpkg:
+
+```bash
+CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" pip install .
+```
+
+---
+
 ## Usage
 
 ### Command Line Interface
@@ -448,10 +523,17 @@ Open3SDCM/
 │   └── src/
 │       └── RealWorldTest.cpp   # Regression tests with real DCM files
 ├── TestData/         # Sample DCM input files for testing
+├── python/           # Python bindings (nanobind)
+│   ├── src/
+│   │   └── open3sdcm_ext.cpp   # Extension module
+│   ├── open3sdcm/    # Python package
+│   ├── tests/        # pytest suite
+│   └── CMakeLists.txt
 ├── ports/
 │   └── open3sdcmlib/ # vcpkg port packaging Lib/ as `open3sdcmlib`
 ├── CMakeLists.txt    # Root CMake configuration
 ├── CMakePresets.json # Build presets
+├── pyproject.toml    # Python packaging (scikit-build-core)
 └── vcpkg.json        # Dependency manifest (whole repo build)
 ```
 

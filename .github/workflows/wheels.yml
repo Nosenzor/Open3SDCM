@@ -1,0 +1,115 @@
+name: Wheels
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - 'python/**'
+      - 'Lib/**'
+      - 'pyproject.toml'
+      - '.github/workflows/wheels.yml'
+
+concurrency:
+  group: wheels-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Pinned to the same vcpkg baseline the C++ build uses, so wheels and the
+  # native build resolve identical dependency versions.
+  VCPKG_COMMIT: efb1e7436979a30c4d3e5ab2375fd8e2e461d541
+
+jobs:
+  wheels:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: ubuntu-latest
+            triplet: x64-linux
+          - name: macOS arm64
+            os: macos-14
+            triplet: arm64-osx
+          - name: macOS x86_64
+            os: macos-13
+            triplet: x64-osx
+          - name: Windows x64
+            os: windows-2022
+            triplet: x64-windows-static-md
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Poco/OpenSSL take several minutes to compile from source, so persist
+      # vcpkg's binary cache. It lives inside the workspace because that is the
+      # only path visible inside cibuildwheel's manylinux container.
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.vcpkg-cache
+          key: vcpkg-${{ matrix.triplet }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('Lib/CMakeLists.txt') }}
+          restore-keys: vcpkg-${{ matrix.triplet }}-${{ env.VCPKG_COMMIT }}-
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.21.3
+        env:
+          # abi3 from 3.12 up (one wheel serves 3.12/3.13/3.14+); 3.9-3.11 need
+          # version-specific wheels because the stable ABI predates 3.12.
+          CIBW_BUILD: cp39-* cp310-* cp311-* cp312-*
+          CIBW_SKIP: '*-musllinux_* *_i686 *_ppc64le *_s390x'
+          CIBW_ARCHS_LINUX: x86_64
+          CIBW_ARCHS_MACOS: ${{ matrix.triplet == 'arm64-osx' && 'arm64' || 'x86_64' }}
+          CIBW_ARCHS_WINDOWS: AMD64
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+
+          CIBW_BEFORE_ALL_LINUX: bash python/scripts/ci_bootstrap_vcpkg.sh "${{ matrix.triplet }}" /project
+          CIBW_BEFORE_ALL_MACOS: bash python/scripts/ci_bootstrap_vcpkg.sh "${{ matrix.triplet }}" "$PWD"
+          CIBW_BEFORE_ALL_WINDOWS: bash python/scripts/ci_bootstrap_vcpkg.sh "${{ matrix.triplet }}" "$PWD"
+
+          CIBW_ENVIRONMENT_LINUX: >-
+            VCPKG_ROOT=/project/.vcpkg
+            VCPKG_DEFAULT_BINARY_CACHE=/project/.vcpkg-cache
+            VCPKG_FORCE_SYSTEM_BINARIES=1
+            CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=/project/.vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} -DVCPKG_MANIFEST_MODE=OFF"
+          CIBW_ENVIRONMENT_MACOS: >-
+            VCPKG_ROOT=$PWD/.vcpkg
+            VCPKG_DEFAULT_BINARY_CACHE=$PWD/.vcpkg-cache
+            MACOSX_DEPLOYMENT_TARGET=${{ matrix.triplet == 'arm64-osx' && '11.0' || '10.15' }}
+            CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=$PWD/.vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} -DVCPKG_MANIFEST_MODE=OFF"
+          CIBW_ENVIRONMENT_WINDOWS: >-
+            VCPKG_ROOT=$PWD\\.vcpkg
+            VCPKG_DEFAULT_BINARY_CACHE=$PWD\\.vcpkg-cache
+            CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=$PWD\\.vcpkg\\scripts\\buildsystems\\vcpkg.cmake -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} -DVCPKG_MANIFEST_MODE=OFF"
+
+          # TestData is excluded from the sdist/wheel, so point the suite at the
+          # checkout and let it skip cleanly if the samples are absent.
+          CIBW_TEST_REQUIRES: pytest numpy
+          CIBW_TEST_COMMAND: pytest {project}/python/tests -q
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.triplet }}
+          path: wheelhouse/*.whl
+
+  sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pipx run build --sdist
+      - name: Verify sdist metadata
+        run: pipx run twine check dist/*.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz

@@ -1,0 +1,72 @@
+[build-system]
+requires = ["scikit-build-core >=0.10", "nanobind >=2.0"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "open3sdcm"
+version = "1.1.2"
+description = "Read 3Shape DCM dental scan files into numpy arrays"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "BSL-1.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Romain Nosenzo" }]
+keywords = ["dcm", "3shape", "dental", "mesh", "3d", "scan"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: C++",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Medical Science Apps.",
+  "Topic :: Multimedia :: Graphics :: 3D Modeling",
+]
+dependencies = ["numpy >=1.21"]
+
+[project.urls]
+Homepage = "https://github.com/Nosenzor/Open3SDCM"
+Source = "https://github.com/Nosenzor/Open3SDCM"
+Issues = "https://github.com/Nosenzor/Open3SDCM/issues"
+
+[project.optional-dependencies]
+test = ["pytest >=7"]
+
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+build-dir = "builds/wheel/{wheel_tag}"
+cmake.source-dir = "python"
+cmake.version = ">=3.26"
+wheel.packages = ["python/open3sdcm"]
+# Ship one abi3 wheel per platform instead of one per interpreter.
+wheel.py-api = "cp312"
+
+# The sdist is rooted at the repo, so it carries Lib/ and python/ (the sources
+# CMake compiles) plus the metadata files, and nothing else. Excludes only --
+# an sdist.include entry would override these, and a bare filename there
+# matches at any depth (e.g. "README.md" would resurrect builds/**/README.md).
+sdist.exclude = [
+  # Sample scans: tens of MB, and the test suite skips cleanly without them.
+  "TestData/**",
+  # Build trees and dependency checkouts.
+  "builds/**",
+  "cmake-build-*/**",
+  "vcpkg/**",
+  "vcpkg_installed/**",
+  "Output/**",
+  # C++ components the wheel does not compile.
+  "CLI/**",
+  "TestTools/**",
+  "ports/**",
+  # Tooling and editor/agent scratch state.
+  ".github/**",
+  ".claude/**",
+  ".omc/**",
+  ".vibe/**",
+  ".idea/**",
+  ".vs/**",
+  ".pytest_cache/**",
+  "**/.DS_Store",
+  "*.pdf",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["python/tests"]
