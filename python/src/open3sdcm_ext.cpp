@@ -224,7 +224,12 @@ NB_MODULE(_core, m)
 
         auto mesh = std::make_unique<Mesh>();
         mesh->source = path;
-        mesh->parser.ParseDCM(path);
+        {
+          // Parsing a large scan takes on the order of a second and touches no
+          // Python state, so hold the GIL only for the wrapping, not the work.
+          nb::gil_scoped_release unlocked;
+          mesh->parser.ParseDCM(path);
+        }
 
         if (mesh->parser.m_Vertices.empty() && mesh->parser.m_Triangles.empty())
         {

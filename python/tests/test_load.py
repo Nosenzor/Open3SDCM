@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import gc
 import pathlib
+import threading
 
 import numpy as np
 import pytest
@@ -149,6 +150,29 @@ def test_repr_reports_contents(mesh):
     assert "vertices=95497" in text
     assert "faces=190206" in text
     assert "texture=yes" in text
+
+
+def test_concurrent_loads_are_independent():
+    """load() drops the GIL while parsing, so this genuinely runs in parallel."""
+    path = scan_path("Scan-01/Scan.dcm")
+    expected = open3sdcm.load(path)
+    results: list = []
+
+    def worker():
+        mesh = open3sdcm.load(path)
+        results.append((np.array(mesh.vertices), np.array(mesh.faces), mesh.color))
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(results) == 4
+    for vertices, faces, color in results:
+        assert np.array_equal(vertices, expected.vertices)
+        assert np.array_equal(faces, expected.faces)
+        assert color == expected.color
 
 
 def test_missing_file_raises_file_not_found(tmp_path):

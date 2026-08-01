@@ -24,4 +24,12 @@ embedded texture -- use :attr:`Mesh.texture` together with :attr:`Mesh.uv`::
 from ._core import Mesh, load
 
 __all__ = ["Mesh", "load", "__version__"]
-__version__ = "1.1.2"
+
+# Read from the installed distribution rather than hardcoding, so this cannot
+# drift from the version declared in pyproject.toml.
+try:
+    from importlib.metadata import PackageNotFoundError, version
+
+    __version__ = version("open3sdcm")
+except PackageNotFoundError:  # pragma: no cover - running from a source tree
+    __version__ = "0.0.0.dev0"
