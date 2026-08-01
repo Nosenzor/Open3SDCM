@@ -53,14 +53,14 @@ This skill coordinates multiple specialized agents in a **Research → Plan → 
 ### Step 1: Determine the User Request
 
 Make sure you understand what user is asking and for what scope.
-When the user does not express strong requirements for test style, coverage goals, or conventions, source the guidelines from [unit-test-generation.prompt.md](unit-test-generation.prompt.md). This prompt provides best practices for discovering conventions, parameterization strategies, coverage goals (aim for 80%), and language-specific patterns.
+When the user does not express strong requirements for test style, coverage goals, or conventions, source the guidelines from [references/unit-test-generation.md](references/unit-test-generation.md). This prompt provides best practices for discovering conventions, parameterization strategies, coverage goals (aim for 80%), and language-specific patterns.
 
 ### Step 2: Invoke the Test Generator
 
 Start by calling the `polyglot-test-generator` agent with your test generation request:
 
 ```
-Generate unit tests for [path or description of what to test], following the [unit-test-generation.prompt.md](unit-test-generation.prompt.md) guidelines
+Generate unit tests for [path or description of what to test], following the [references/unit-test-generation.md](references/unit-test-generation.md) guidelines
 ```
 
 The Test Generator will manage the entire pipeline automatically.
