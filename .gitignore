@@ -17,3 +17,19 @@ cmake-build*/**
 /hps_parser.py
 /TestOutput/
 /Output/
+
+# Python bindings
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+/dist/
+/wheelhouse/
+*.egg-info/
+.pytest_cache/
+/.vcpkg/
+/.vcpkg-cache/
+/.vcpkg-bt/
+
+# macOS
+.DS_Store

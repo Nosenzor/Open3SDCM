@@ -1,7 +1,7 @@
 ---
-name: 'Cryptography & Reverse Engineering Expert'
+name: crypto-re-expert
 description: 'Expert in cryptographic analysis and binary reverse engineering, specializing in identifying encryption algorithms, extracting keys/IVs, and decoding proprietary binary formats.'
-tools: ['codebase', 'search', 'usages', 'edit/editFiles', 'web/fetch', 'runCommands', 'terminalLastCommand', 'terminalSelection', 'problems', 'searchResults', 'githubRepo']
+tools: ['read', 'search', 'edit', 'execute', 'web']
 ---
 
 # Cryptography & Reverse Engineering Expert

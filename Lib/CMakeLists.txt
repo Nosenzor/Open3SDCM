@@ -13,6 +13,11 @@ endif ()
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
+# Embedders that consume this library via add_subdirectory (e.g. the Python
+# bindings wheel build) don't want its install/export rules leaking into their
+# own install tree. The vcpkg port and standalone builds need them, so ON.
+option(OPEN3SDCMLIB_INSTALL "Generate install and export rules for Open3SDCMLib" ON)
+
 #find_package(Boost REQUIRED)
 find_package(Poco CONFIG REQUIRED COMPONENTS XML JSON Zip)
 find_package(Boost REQUIRED)
@@ -54,6 +59,8 @@ endif()
 
 # ---- Install / export (required for vcpkg packaging) ----
 
+if(OPEN3SDCMLIB_INSTALL)
+
 set(Open3SDCMLib_INSTALL_CMAKEDIR "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}")
 
 install(TARGETS ${PROJECT_NAME}
@@ -92,3 +99,5 @@ install(FILES
     "${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake"
     DESTINATION ${Open3SDCMLib_INSTALL_CMAKEDIR}
 )
+
+endif() # OPEN3SDCMLIB_INSTALL

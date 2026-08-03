@@ -82,16 +82,29 @@ int main(int argc, const char** argv)
   // Declare the supported options.
   po::options_description desc("Allowed options");
   desc.add_options()
-    ("help,h", "produce help message")
+    // Paths are taken as strings, not std::filesystem::path: program_options
+  // validates path values by stream extraction, which stops at the first space
+  // and then rejects the whole argument. That made any path containing a space
+  // unusable -- including this repository's own "TestData/Hole3x5/Hole 3x5.dcm".
+  ("help,h", "produce help message")
         ("action", po::value<std::string>(), "what to do")
-          ("input,i", po::value<std::filesystem::path>(), "input file or directory")
-            ("output_dir,o", po::value<std::filesystem::path>(), "output directory")
+          ("input,i", po::value<std::string>(), "input file or directory")
+            ("output_dir,o", po::value<std::string>(), "output directory")
               ("format,f", po::value<std::string>(), "output format stl,ply,obj")
                   ;
 
   po::variables_map vm;
-  po::store(po::parse_command_line(argc, argv, desc), vm);
-  po::notify(vm);
+  try
+  {
+    po::store(po::parse_command_line(argc, argv, desc), vm);
+    po::notify(vm);
+  }
+  catch (const po::error& ex)
+  {
+    // Without this the exception escapes main() and the process aborts.
+    fmt::print(stderr, "Invalid arguments: {}\n\nRun with --help for usage.\n", ex.what());
+    return 1;
+  }
 
   if (vm.count("help"))
   {
@@ -115,7 +128,7 @@ int main(int argc, const char** argv)
   std::vector<std::filesystem::path> AllInFiles;
   if (vm.count("input"))
   {
-    std::filesystem::path InputPath = vm["input"].as<std::filesystem::path>();
+    std::filesystem::path InputPath = vm["input"].as<std::string>();
 
     if (!fs::exists(InputPath))
     {
@@ -164,7 +177,7 @@ int main(int argc, const char** argv)
   std::filesystem::path OutputDir;
   if (vm.count("output_dir"))
   {
-    OutputDir = vm["output_dir"].as<std::filesystem::path>();
+    OutputDir = vm["output_dir"].as<std::string>();
 
     auto timestamp = std::format("{:%Y-%m-%d-%H-%M-%S}", std::chrono::system_clock::now());
     OutputDir /= timestamp;

@@ -8,10 +8,12 @@
 // #include "boost/dynamic_bitset.hpp"
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <deque>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -37,12 +39,8 @@
 #include <Poco/Path.h>
 #include <Poco/XML/XMLException.h>
 
-// Assimp and fmt are not used in F3D build
-// #include <assimp/Exporter.hpp>
-// #include <assimp/scene.h>
-// #include <assimp/postprocess.h>
-
-// #include <fmt/ostream.h>
+// This library intentionally depends on neither assimp nor fmt: every export
+// format (STL, PLY, OBJ) is written by hand in the detail namespace below.
 
 namespace fs = std::filesystem;
 
@@ -1194,6 +1192,113 @@ namespace Open3SDCM
       return output.good();
     }
 
+    // Binary rather than ASCII STL: 50 bytes per triangle against roughly 250,
+    // which matters at the ~190k triangles these scans carry. STL has no
+    // standard way to store colour or texture, so surfaceData is necessarily
+    // dropped here — PLY and OBJ preserve it.
+    bool ExportStl(const fs::path& outputPath,
+                   const std::vector<float>& vertices,
+                   const std::vector<Open3SDCM::Triangle>& triangles)
+    {
+      static_assert(std::numeric_limits<float>::is_iec559,
+                    "binary STL stores IEEE-754 single-precision floats");
+
+      if (!EnsureParentDirectoryExists(outputPath))
+      {
+        return false;
+      }
+
+      if (triangles.size() > std::numeric_limits<std::uint32_t>::max())
+      {
+        return false;
+      }
+
+      std::ofstream output(outputPath, std::ios::binary);
+      if (!output)
+      {
+        return false;
+      }
+
+      // STL is little-endian regardless of host, so emit bytes explicitly
+      // instead of dumping the in-memory representation.
+      const auto writeUint32 = [&output](const std::uint32_t value)
+      {
+        const std::array<char, 4> bytes{static_cast<char>(value & 0xFFU),
+                                        static_cast<char>((value >> 8U) & 0xFFU),
+                                        static_cast<char>((value >> 16U) & 0xFFU),
+                                        static_cast<char>((value >> 24U) & 0xFFU)};
+        output.write(bytes.data(), bytes.size());
+      };
+      const auto writeUint16 = [&output](const std::uint16_t value)
+      {
+        const std::array<char, 2> bytes{static_cast<char>(value & 0xFFU),
+                                        static_cast<char>((value >> 8U) & 0xFFU)};
+        output.write(bytes.data(), bytes.size());
+      };
+      const auto writeFloat = [&writeUint32](const float value)
+      {
+        std::uint32_t bits{0};
+        std::memcpy(&bits, &value, sizeof(bits));
+        writeUint32(bits);
+      };
+
+      // The 80-byte header is free-form, but must not begin with "solid":
+      // readers use that prefix to detect an ASCII STL.
+      std::array<char, 80> header{};
+      const std::string banner("Open3SDCM binary STL");
+      std::copy(banner.begin(), banner.end(), header.begin());
+      output.write(header.data(), header.size());
+
+      writeUint32(static_cast<std::uint32_t>(triangles.size()));
+
+      const std::size_t vertexCount = vertices.size() / 3;
+      for (const auto& triangle : triangles)
+      {
+        if (triangle.v1 >= vertexCount || triangle.v2 >= vertexCount || triangle.v3 >= vertexCount)
+        {
+          return false;
+        }
+
+        const float* const cornerA = &vertices[triangle.v1 * 3];
+        const float* const cornerB = &vertices[triangle.v2 * 3];
+        const float* const cornerC = &vertices[triangle.v3 * 3];
+
+        const std::array<float, 3> edge1{cornerB[0] - cornerA[0], cornerB[1] - cornerA[1], cornerB[2] - cornerA[2]};
+        const std::array<float, 3> edge2{cornerC[0] - cornerA[0], cornerC[1] - cornerA[1], cornerC[2] - cornerA[2]};
+        std::array<float, 3> normal{edge1[1] * edge2[2] - edge1[2] * edge2[1],
+                                    edge1[2] * edge2[0] - edge1[0] * edge2[2],
+                                    edge1[0] * edge2[1] - edge1[1] * edge2[0]};
+
+        const float length = std::sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
+        if (length > 0.0F && std::isfinite(length))
+        {
+          normal[0] /= length;
+          normal[1] /= length;
+          normal[2] /= length;
+        }
+        else
+        {
+          // A zero normal is the format's way of saying "derive it from the
+          // vertex winding", which is the right answer for a degenerate facet.
+          normal = {0.0F, 0.0F, 0.0F};
+        }
+
+        for (const float component : normal)
+        {
+          writeFloat(component);
+        }
+        for (const float* const corner : {cornerA, cornerB, cornerC})
+        {
+          writeFloat(corner[0]);
+          writeFloat(corner[1]);
+          writeFloat(corner[2]);
+        }
+        writeUint16(0);// attribute byte count, unused
+      }
+
+      return output.good();
+    }
+
     bool ExportObj(const fs::path& outputPath,
                    const std::vector<float>& vertices,
                    const std::vector<Open3SDCM::Triangle>& triangles,
@@ -1495,42 +1600,21 @@ namespace Open3SDCM
       return true;
     }
 
-    // Assimp export code disabled for F3D
-    // aiScene* scene = new aiScene();
-    // scene->mRootNode = new aiNode();
+    if (format == "stl" || format == "stlb")
+    {
+      const bool exported = detail::ExportStl(outputPath, m_Vertices, m_Triangles);
+      if (!exported)
+      {
+        std::cerr << "Error: Failed to export mesh to STL\n";
+        return false;
+      }
 
-    // scene->mNumMeshes = 1;
-    // scene->mMeshes = new aiMesh*[1];
-    // aiMesh* mesh = new aiMesh();
-    // scene->mMeshes[0] = mesh;
-    // scene->mRootNode->mNumMeshes = 1;
-    // scene->mRootNode->mMeshes = new unsigned int[1];
-    // scene->mRootNode->mMeshes[0] = 0;
+      std::cout << "Successfully exported mesh to: " << outputPath.string() << "\n";
+      return true;
+    }
 
-    // mesh->mNumVertices = numVertices;
-    // mesh->mVertices = new aiVector3D[mesh->mNumVertices];
-    // for (size_t i = 0; i < mesh->mNumVertices; ++i)
-    // {
-    //   mesh->mVertices[i].x = m_Vertices[i * 3 + 0];
-    //   mesh->mVertices[i].y = m_Vertices[i * 3 + 1];
-    //   mesh->mVertices[i].z = m_Vertices[i * 3 + 2];
-    // }
-
-    // mesh->mNumFaces = m_Triangles.size();
-    // mesh->mFaces = new aiFace[mesh->mNumFaces];
-    // for (size_t i = 0; i < mesh->mNumFaces; ++i)
-    // {
-    //   aiFace& face = mesh->mFaces[i];
-    //   face.mNumIndices = 3;
-    //   face.mIndices = new unsigned int[3];
-    //   face.mIndices[0] = m_Triangles[i].v1;
-    //   face.mIndices[1] = m_Triangles[i].v2;
-    //   face.mIndices[2] = m_Triangles[i].v3;
-    // }
-
-    // Assimp export disabled for F3D - export not supported
-    // All the scene/mesh setup and export code has been commented out
-    return false; // Export not supported in F3D build
+    std::cerr << "Error: Unsupported output format '" << format << "'. Expected stl, ply or obj.\n";
+    return false;
   }
 
 }// namespace Open3SDCM
