@@ -47,16 +47,24 @@ git -C "${VCPKG_DIR}" checkout --force "${VCPKG_COMMIT}"
 # does not ship -- it fails with "Could not find zip. Please install it". The
 # GitHub-hosted Linux, macOS and Windows runners already have them, so this is a
 # no-op outside the cibuildwheel container.
-if ! command -v zip >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1; then
-  echo "installing zip/unzip for vcpkg bootstrap"
+# perl is additionally required to configure OpenSSL, and ninja is the generator
+# vcpkg drives for compiler detection.
+missing=""
+for tool in zip unzip perl ninja; do
+  command -v "${tool}" >/dev/null 2>&1 || missing="${missing} ${tool}"
+done
+if [ -n "${missing}" ]; then
+  echo "installing missing vcpkg prerequisites:${missing}"
+  # Package names differ from binary names for ninja.
+  pkgs="$(echo "${missing}" | sed 's/\bninja\b/ninja-build/')"
   if command -v dnf >/dev/null 2>&1; then
-    dnf install -y zip unzip
+    dnf install -y ${pkgs} || echo "warning: dnf could not install${missing}" >&2
   elif command -v yum >/dev/null 2>&1; then
-    yum install -y zip unzip
+    yum install -y ${pkgs} || echo "warning: yum could not install${missing}" >&2
   elif command -v apt-get >/dev/null 2>&1; then
-    apt-get update && apt-get install -y zip unzip
+    apt-get update && apt-get install -y ${pkgs} || echo "warning: apt could not install${missing}" >&2
   else
-    echo "warning: no supported package manager found to install zip/unzip" >&2
+    echo "warning: no supported package manager found to install${missing}" >&2
   fi
 fi
 
@@ -80,6 +88,25 @@ VCPKG_BIN="${VCPKG_DIR}/vcpkg"
 # features instead, so the correct spelling depends on the baseline; plain
 # "poco" is what the repository's own vcpkg.json requests and what the C++ CI
 # already builds against. Revisit this if VCPKG_COMMIT moves forward.
+# vcpkg reports failures by pointing at log files under the buildtrees root, which
+# CI never surfaces -- the run just says "See logs for more information" and exits.
+# Dump them on the way out so a failed run is diagnosable from the job output alone.
+dump_vcpkg_logs() {
+  status=$?
+  [ "${status}" -eq 0 ] && return 0
+  echo "=== vcpkg failed (exit ${status}); dumping logs ==="
+  find "${ROOT}/.vcpkg-bt" -name '*.log' -size -256k 2>/dev/null | head -20 | while read -r log; do
+    echo "--- ${log} ---"
+    tail -60 "${log}"
+  done
+  echo "=== compiler probe ==="
+  echo "CC=${CC:-unset} CXX=${CXX:-unset}"
+  command -v cc gcc g++ ninja cmake perl 2>/dev/null || true
+  (gcc --version 2>&1 | head -1) || true
+  return "${status}"
+}
+trap dump_vcpkg_logs EXIT
+
 "${VCPKG_BIN}" install \
   --classic \
   --triplet "${TRIPLET}" \
@@ -89,4 +116,5 @@ VCPKG_BIN="${VCPKG_DIR}/vcpkg"
   openssl \
   boost-headers
 
+trap - EXIT
 echo "vcpkg dependencies ready for ${TRIPLET}"
