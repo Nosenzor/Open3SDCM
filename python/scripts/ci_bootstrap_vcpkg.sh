@@ -43,6 +43,23 @@ fi
 git -C "${VCPKG_DIR}" fetch --depth 1 origin "${VCPKG_COMMIT}"
 git -C "${VCPKG_DIR}" checkout --force "${VCPKG_COMMIT}"
 
+# vcpkg's bootstrap shells out to zip and unzip, which the manylinux_2_28 image
+# does not ship -- it fails with "Could not find zip. Please install it". The
+# GitHub-hosted Linux, macOS and Windows runners already have them, so this is a
+# no-op outside the cibuildwheel container.
+if ! command -v zip >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1; then
+  echo "installing zip/unzip for vcpkg bootstrap"
+  if command -v dnf >/dev/null 2>&1; then
+    dnf install -y zip unzip
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y zip unzip
+  elif command -v apt-get >/dev/null 2>&1; then
+    apt-get update && apt-get install -y zip unzip
+  else
+    echo "warning: no supported package manager found to install zip/unzip" >&2
+  fi
+fi
+
 if [ -x "${VCPKG_DIR}/vcpkg" ] || [ -x "${VCPKG_DIR}/vcpkg.exe" ]; then
   echo "vcpkg already bootstrapped"
 elif [ -f "${VCPKG_DIR}/bootstrap-vcpkg.bat" ] && [ "${OS:-}" = "Windows_NT" ]; then
