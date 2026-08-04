@@ -71,14 +71,29 @@ fi
 # OpenSSL's Configure is a Perl program that pulls in modules the manylinux image
 # ships Perl without -- it fails with "Perl cannot find IPC::Cmd". Debian-family
 # perl packages bundle these, so this is RHEL-family only.
+#
+# Installed one at a time on purpose: several of these are part of core perl on
+# some images and have no separate package, and a single dnf transaction listing
+# an unavailable name fails as a whole ("Unable to find a match"), taking the
+# packages that DO exist down with it.
 if ! perl -MIPC::Cmd -e1 >/dev/null 2>&1; then
-  perl_pkgs="perl-IPC-Cmd perl-Data-Dumper perl-FindBin perl-File-Compare perl-File-Copy perl-Digest-SHA"
   echo "installing Perl modules for OpenSSL's Configure"
-  if command -v dnf >/dev/null 2>&1; then
-    dnf install -y ${perl_pkgs} || echo "warning: dnf could not install Perl modules" >&2
-  elif command -v yum >/dev/null 2>&1; then
-    yum install -y ${perl_pkgs} || echo "warning: yum could not install Perl modules" >&2
+  pm=""
+  command -v dnf >/dev/null 2>&1 && pm=dnf
+  [ -z "${pm}" ] && command -v yum >/dev/null 2>&1 && pm=yum
+  if [ -n "${pm}" ]; then
+    for perl_pkg in perl-IPC-Cmd perl-Data-Dumper perl-Digest-SHA perl-FindBin; do
+      "${pm}" install -y "${perl_pkg}" >/dev/null 2>&1 \
+        && echo "  installed ${perl_pkg}" \
+        || echo "  skipped ${perl_pkg} (unavailable or already provided by core perl)"
+    done
   fi
+  # Fail loudly here rather than 10 minutes later inside OpenSSL's configure.
+  if ! perl -MIPC::Cmd -e1 >/dev/null 2>&1; then
+    echo "error: IPC::Cmd still missing after install attempt; OpenSSL will not configure" >&2
+    exit 1
+  fi
+  echo "IPC::Cmd available"
 fi
 
 if [ -x "${VCPKG_DIR}/vcpkg" ] || [ -x "${VCPKG_DIR}/vcpkg.exe" ]; then
