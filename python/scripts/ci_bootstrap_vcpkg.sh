@@ -76,19 +76,24 @@ fi
 # some images and have no separate package, and a single dnf transaction listing
 # an unavailable name fails as a whole ("Unable to find a match"), taking the
 # packages that DO exist down with it.
-if ! perl -MIPC::Cmd -e1 >/dev/null 2>&1; then
+#
+# Scoped to images with dnf/yum: this is the manylinux gap specifically. Windows and
+# macOS resolve Perl their own way (and built OpenSSL fine before this check existed),
+# so probing them here would fail a working build.
+pm=""
+if command -v dnf >/dev/null 2>&1; then
+  pm=dnf
+elif command -v yum >/dev/null 2>&1; then
+  pm=yum
+fi
+if [ -n "${pm}" ] && ! perl -MIPC::Cmd -e1 >/dev/null 2>&1; then
   echo "installing Perl modules for OpenSSL's Configure"
-  pm=""
-  command -v dnf >/dev/null 2>&1 && pm=dnf
-  [ -z "${pm}" ] && command -v yum >/dev/null 2>&1 && pm=yum
-  if [ -n "${pm}" ]; then
-    for perl_pkg in perl-IPC-Cmd perl-Data-Dumper perl-Digest-SHA perl-FindBin; do
-      "${pm}" install -y "${perl_pkg}" >/dev/null 2>&1 \
-        && echo "  installed ${perl_pkg}" \
-        || echo "  skipped ${perl_pkg} (unavailable or already provided by core perl)"
-    done
-  fi
-  # Fail loudly here rather than 10 minutes later inside OpenSSL's configure.
+  for perl_pkg in perl-IPC-Cmd perl-Data-Dumper perl-Digest-SHA perl-FindBin; do
+    "${pm}" install -y "${perl_pkg}" >/dev/null 2>&1 \
+      && echo "  installed ${perl_pkg}" \
+      || echo "  skipped ${perl_pkg} (unavailable or already provided by core perl)"
+  done
+  # Fail here rather than minutes later inside OpenSSL's configure.
   if ! perl -MIPC::Cmd -e1 >/dev/null 2>&1; then
     echo "error: IPC::Cmd still missing after install attempt; OpenSSL will not configure" >&2
     exit 1
