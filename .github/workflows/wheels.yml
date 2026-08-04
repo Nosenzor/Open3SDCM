@@ -60,6 +60,15 @@ jobs:
           key: vcpkg-${{ matrix.triplet }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('Lib/CMakeLists.txt') }}
           restore-keys: vcpkg-${{ matrix.triplet }}-${{ env.VCPKG_COMMIT }}-
 
+      # cibuildwheel evaluates $PWD with bashlex, but Windows has no PWD in its
+      # environment, so "$PWD" survived verbatim into the bootstrap path and
+      # produced 'D:\a\repo\$PWD\.vcpkg\scripts\bootstrap.ps1' (exit 127).
+      # `pwd -W` yields the native drive form with forward slashes (D:/a/repo),
+      # which is what CMake wants; it is MSYS-only, hence the fallback.
+      - name: Resolve workspace path for vcpkg
+        shell: bash
+        run: echo "WS=$(pwd -W 2>/dev/null || pwd)" >> "$GITHUB_ENV"
+
       - name: Build wheels
         # Pinned to the commit behind v4.1.1: tags are mutable. 2.21.3 pinned a
         # manylinux image tag that no longer resolves ("No such image:
@@ -77,7 +86,7 @@ jobs:
 
           CIBW_BEFORE_ALL_LINUX: bash python/scripts/ci_bootstrap_vcpkg.sh "${{ matrix.triplet }}" /project
           CIBW_BEFORE_ALL_MACOS: bash python/scripts/ci_bootstrap_vcpkg.sh "${{ matrix.triplet }}" "$PWD"
-          CIBW_BEFORE_ALL_WINDOWS: bash python/scripts/ci_bootstrap_vcpkg.sh "${{ matrix.triplet }}" "$PWD"
+          CIBW_BEFORE_ALL_WINDOWS: bash python/scripts/ci_bootstrap_vcpkg.sh "${{ matrix.triplet }}" "${{ env.WS }}"
 
           CIBW_ENVIRONMENT_LINUX: >-
             VCPKG_ROOT=/project/.vcpkg
@@ -90,11 +99,12 @@ jobs:
             MACOSX_DEPLOYMENT_TARGET=${{ matrix.triplet == 'arm64-osx' && '11.0' || '10.15' }}
             CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=$PWD/.vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} -DVCPKG_MANIFEST_MODE=OFF"
           # Forward slashes: CMake accepts them on Windows and they avoid a
-          # round of backslash escaping through the shell.
+          # round of backslash escaping through the shell. env.WS rather than
+          # $PWD -- see "Resolve workspace path for vcpkg" above.
           CIBW_ENVIRONMENT_WINDOWS: >-
-            VCPKG_ROOT=$PWD/.vcpkg
-            VCPKG_DEFAULT_BINARY_CACHE=$PWD/.vcpkg-cache
-            CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=$PWD/.vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} -DVCPKG_MANIFEST_MODE=OFF"
+            VCPKG_ROOT=${{ env.WS }}/.vcpkg
+            VCPKG_DEFAULT_BINARY_CACHE=${{ env.WS }}/.vcpkg-cache
+            CMAKE_ARGS="-DCMAKE_TOOLCHAIN_FILE=${{ env.WS }}/.vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=${{ matrix.triplet }} -DVCPKG_MANIFEST_MODE=OFF"
 
           # TestData is excluded from the sdist/wheel, so point the suite at the
           # checkout and let it skip cleanly if the samples are absent.
@@ -122,3 +132,30 @@ jobs:
         with:
           name: sdist
           path: dist/*.tar.gz
+
+  # Publishes to PyPI only for tagged releases, so workflow_dispatch runs stay safe
+  # to iterate with. Uses trusted publishing (OIDC), so no API token is stored --
+  # this requires a PyPI publisher configured for the project, pointing at this
+  # repository, this workflow filename, and the `pypi` environment.
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [wheels, sdist]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+      - name: List what will be published
+        run: ls -l dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
