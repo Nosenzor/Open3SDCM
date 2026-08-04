@@ -68,6 +68,19 @@ if [ -n "${missing}" ]; then
   fi
 fi
 
+# OpenSSL's Configure is a Perl program that pulls in modules the manylinux image
+# ships Perl without -- it fails with "Perl cannot find IPC::Cmd". Debian-family
+# perl packages bundle these, so this is RHEL-family only.
+if ! perl -MIPC::Cmd -e1 >/dev/null 2>&1; then
+  perl_pkgs="perl-IPC-Cmd perl-Data-Dumper perl-FindBin perl-File-Compare perl-File-Copy perl-Digest-SHA"
+  echo "installing Perl modules for OpenSSL's Configure"
+  if command -v dnf >/dev/null 2>&1; then
+    dnf install -y ${perl_pkgs} || echo "warning: dnf could not install Perl modules" >&2
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y ${perl_pkgs} || echo "warning: yum could not install Perl modules" >&2
+  fi
+fi
+
 if [ -x "${VCPKG_DIR}/vcpkg" ] || [ -x "${VCPKG_DIR}/vcpkg.exe" ]; then
   echo "vcpkg already bootstrapped"
 elif [ -f "${VCPKG_DIR}/bootstrap-vcpkg.bat" ] && [ "${OS:-}" = "Windows_NT" ]; then
