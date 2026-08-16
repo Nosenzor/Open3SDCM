@@ -1,0 +1,50 @@
+# MrDocs configuration for the Open3SDCM C++ API.
+#
+# Pattern: "scanned". MrDocs walks the `input` directories, synthesizes a
+# compilation database from the public headers and parses each as its own
+# translation unit. No prior CMake/vcpkg build is required to generate the
+# reference; the header search paths below resolve the public-API dependencies
+# (Poco, Boost, OpenSSL) so libclang can parse ParseDcm.h / definitions.h.
+#
+# Run from the repository root:
+#   mrdocs --config=docs/mrdocs.yml
+#
+# The generated HTML is written to docs-build/html by default. See
+# .github/workflows/docs.yml for the CI build that publishes it.
+
+# Everything in the config is resolved relative to the repository root.
+source-root: ..
+
+# Public headers that form the Open3SDCM C++ API surface.
+input:
+  - ../Lib/src
+
+# Header search paths. These match the public include directories declared in
+# Lib/CMakeLists.txt (the library's own src/) plus the transitive public
+# dependencies surfaced by ParseDcm.h (Poco::XML) and the implementation
+# headers (Boost, OpenSSL) that libclang needs to fully resolve the AST.
+#
+# When running locally against a vcpkg-installed tree, point MRDOCS_INCLUDES
+# at the vcpkg_installed/<triplet>/include directory, e.g.:
+#   MRDOCS_INCLUDES="$PWD/builds/ninja-release-vcpkg/vcpkg_installed/x64-linux/include"
+# In CI (.github/workflows/docs.yml) this is populated from a vcpkg manifest
+# install so the docs job never has to compile the library.
+includes:
+  - ../Lib/src
+  # vcpkg-installed public headers (Poco, Boost, OpenSSL) injected via CI.
+  - ${env:MRDOCS_INCLUDES}
+
+# Only document the public namespace. The detail namespace and CLI/python
+# translation units are implementation and stay out of the reference.
+include-symbols:
+  - 'Open3SDCM::**'
+implementation-defined:
+  - '**::detail'
+
+# Emit a multi-page HTML site under docs-build/html.
+generator: html
+multipage: true
+
+# Fail loudly on unresolved symbols so the docs job surfaces parsing problems
+# instead of silently dropping members from the reference.
+verbose: true

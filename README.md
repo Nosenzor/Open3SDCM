@@ -460,6 +460,27 @@ DCM files are ZIP archives containing HPS (Himsa Packed Scan) XML files. The int
 
 - [dcm2stl.appspot.com](https://dcm2stl.appspot.com/) - A web service that can convert DCM to STL for comparison
 
+### API Reference
+
+The C++ API is documented with [MrDocs](https://github.com/cppalliance/mrdocs), which
+parses the public headers in [`Lib/src/`](Lib/src) (`ParseDcm.h`, `definitions.h`) with
+libclang and renders a multi-page HTML reference.
+
+The configuration lives at [`docs/mrdocs.yml`](docs/mrdocs.yml). To build the reference
+locally against a vcpkg-installed dependency tree:
+
+```bash
+# After configuring/building once (so vcpkg has installed the headers), e.g.
+#   cmake --preset ninja-release-vcpkg && cmake --build builds/ninja-release-vcpkg -j
+export MRDOCS_INCLUDES="$PWD/builds/ninja-release-vcpkg/vcpkg_installed/x64-linux/include"
+mrdocs --config=docs/mrdocs.yml
+# Output is written to docs-build/html/
+```
+
+In CI, the [`Docs`](.github/workflows/docs.yml) workflow regenerates the reference on
+every change to the public headers or the MrDocs config and uploads it as a workflow
+artifact (`open3sdcm-api-reference`).
+
 ---
 
 ## Releases

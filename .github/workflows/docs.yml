@@ -1,0 +1,86 @@
+name: Docs
+
+# Builds the C++ API reference with MrDocs (https://github.com/cppalliance/mrdocs)
+# and uploads the generated HTML site as a workflow artifact.
+#
+# MrDocs parses the public headers (Lib/src/ParseDcm.h, Lib/src/definitions.h)
+# with libclang, so it only needs the header search paths for the library's
+# transitive public dependencies (Poco, Boost, OpenSSL). Those are resolved
+# with a vcpkg manifest install (header-only, no compilation of the library
+# itself), which keeps the job fast and independent of the CMake build.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Lib/src/**'
+      - 'docs/mrdocs.yml'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - 'Lib/src/**'
+      - 'docs/mrdocs.yml'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+jobs:
+  mrdocs:
+    name: Build API reference
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install vcpkg and header dependencies
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
+          vcpkgJsonGlob: '**/vcpkg.json'
+          vcpkgJsonIgnores: "['**/vcpkg/**', '**/ports/**']"
+        env:
+          VCPKG_FORCE_SYSTEM_BINARIES: 1
+
+      - name: Locate vcpkg installed headers
+        id: vcpkg-includes
+        shell: bash
+        run: |
+          set -euo pipefail
+          installed="$(find "${{ github.workspace }}" -type d -path '*/vcpkg_installed/*' -name include 2>/dev/null | head -1)"
+          if [ -z "${installed}" ]; then
+            echo "::error::could not locate a vcpkg_installed/*/include directory"
+            exit 1
+          fi
+          echo "Resolved include root: ${installed}"
+          echo "MRDOCS_INCLUDES=${installed}" >> "$GITHUB_ENV"
+
+      - name: Download MrDocs
+        shell: bash
+        run: |
+          set -euo pipefail
+          # MrDocs ships prebuilt binaries for every release; pin the version
+          # and download the Linux tarball.
+          MRDOCS_VERSION="0.8.0"
+          archive="MrDocs-${MRDOCS_VERSION}-Linux.tar.gz"
+          curl -fL -o "${archive}" \
+            "https://github.com/cppalliance/mrdocs/releases/download/v${MRDOCS_VERSION}/${archive}"
+          tar -xzf "${archive}"
+          # The tarball extracts to an MrDocs-<version>-Linux/ directory.
+          bin_dir="$(find . -maxdepth 1 -type d -name 'MrDocs-*-Linux' | head -1)"
+          echo "MRDOCS_BIN=${{ github.workspace }}/${bin_dir}/mrdocs" >> "$GITHUB_ENV"
+          chmod +x "${{ github.workspace }}/${bin_dir}/mrdocs"
+
+      - name: Generate API reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${MRDOCS_BIN}" --config=docs/mrdocs.yml
+
+      - name: Upload generated docs
+        uses: actions/upload-artifact@v4
+        with:
+          name: open3sdcm-api-reference
+          path: docs-build/
+          if-no-files-found: error
+          retention-days: 30
