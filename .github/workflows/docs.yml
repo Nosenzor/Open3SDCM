@@ -53,10 +53,16 @@ jobs:
           curl -fL -o "${archive}" \
             "https://github.com/cppalliance/mrdocs/releases/download/v${MRDOCS_VERSION}/${archive}"
           tar -xzf "${archive}"
-          # The tarball extracts to an MrDocs-<version>-Linux/ directory.
-          bin_dir="$(find . -maxdepth 1 -type d -name 'MrDocs-*-Linux' | head -1)"
-          echo "MRDOCS_BIN=${{ github.workspace }}/${bin_dir}/mrdocs" >> "$GITHUB_ENV"
-          chmod +x "${{ github.workspace }}/${bin_dir}/mrdocs"
+          # The archive layout has changed between releases; locate the
+          # executable by name rather than assuming a fixed path.
+          mrdocs_bin="$(find . -type f -name mrdocs | head -1)"
+          if [ -z "${mrdocs_bin}" ]; then
+            echo "::error::mrdocs binary not found in the extracted archive"
+            find . -maxdepth 3 -type f | head -50
+            exit 1
+          fi
+          chmod +x "${mrdocs_bin}"
+          echo "MRDOCS_BIN=${mrdocs_bin}" >> "$GITHUB_ENV"
 
       - name: Generate API reference
         shell: bash
