@@ -5,9 +5,9 @@ name: Docs
 #
 # MrDocs parses the public headers (Lib/src/ParseDcm.h, Lib/src/definitions.h)
 # with libclang, so it only needs the header search paths for the library's
-# transitive public dependencies (Poco, Boost, OpenSSL). Those are resolved
-# with a vcpkg manifest install (header-only, no compilation of the library
-# itself), which keeps the job fast and independent of the CMake build.
+# transitive public dependencies (Poco, Boost, OpenSSL). Those are installed
+# from the Ubuntu system packages, which keeps the job fast and independent of
+# the CMake/vcpkg build matrix.
 
 on:
   push:
@@ -30,30 +30,17 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
 
-      - name: Install vcpkg and header dependencies
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgDirectory: '${{ github.workspace }}/vcpkg'
-          vcpkgJsonGlob: '**/vcpkg.json'
-          vcpkgJsonIgnores: "['**/vcpkg/**', '**/ports/**']"
-        env:
-          VCPKG_FORCE_SYSTEM_BINARIES: 1
-
-      - name: Locate vcpkg installed headers
-        id: vcpkg-includes
-        shell: bash
+      - name: Install header dependencies
         run: |
-          set -euo pipefail
-          installed="$(find "${{ github.workspace }}" -type d -path '*/vcpkg_installed/*' -name include 2>/dev/null | head -1)"
-          if [ -z "${installed}" ]; then
-            echo "::error::could not locate a vcpkg_installed/*/include directory"
-            exit 1
-          fi
-          echo "Resolved include root: ${installed}"
-          echo "MRDOCS_INCLUDES=${installed}" >> "$GITHUB_ENV"
+          sudo apt-get update
+          # MrDocs only needs the public headers to parse the API surface:
+          # Poco::XML (referenced by ParseDcm.h), Boost and OpenSSL (referenced
+          # by the implementation headers). System packages are sufficient.
+          sudo apt-get install -y \
+            libpoco-dev \
+            libboost-all-dev \
+            libssl-dev
 
       - name: Download MrDocs
         shell: bash

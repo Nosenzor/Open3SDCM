@@ -466,16 +466,20 @@ The C++ API is documented with [MrDocs](https://github.com/cppalliance/mrdocs), 
 parses the public headers in [`Lib/src/`](Lib/src) (`ParseDcm.h`, `definitions.h`) with
 libclang and renders a multi-page HTML reference.
 
-The configuration lives at [`docs/mrdocs.yml`](docs/mrdocs.yml). To build the reference
-locally against a vcpkg-installed dependency tree:
+The configuration lives at [`docs/mrdocs.yml`](docs/mrdocs.yml). MrDocs resolves the
+transitive public dependencies (Poco, Boost, OpenSSL) from the system include paths,
+so install the matching development packages first:
 
 ```bash
-# After configuring/building once (so vcpkg has installed the headers), e.g.
-#   cmake --preset ninja-release-vcpkg && cmake --build builds/ninja-release-vcpkg -j
-export MRDOCS_INCLUDES="$PWD/builds/ninja-release-vcpkg/vcpkg_installed/x64-linux/include"
+# Debian / Ubuntu (libpoco-dev, libboost-all-dev, libssl-dev)
+sudo apt-get install -y libpoco-dev libboost-all-dev libssl-dev
+
 mrdocs --config=docs/mrdocs.yml
 # Output is written to docs-build/html/
 ```
+
+For a local build against a vcpkg-installed tree instead of system packages, add the
+`vcpkg_installed/<triplet>/include` directory to the `includes:` list in the config.
 
 In CI, the [`Docs`](.github/workflows/docs.yml) workflow regenerates the reference on
 every change to the public headers or the MrDocs config and uploads it as a workflow

@@ -3,8 +3,9 @@
 # Pattern: "scanned". MrDocs walks the `input` directories, synthesizes a
 # compilation database from the public headers and parses each as its own
 # translation unit. No prior CMake/vcpkg build is required to generate the
-# reference; the header search paths below resolve the public-API dependencies
-# (Poco, Boost, OpenSSL) so libclang can parse ParseDcm.h / definitions.h.
+# reference; libclang resolves the public-API dependencies (Poco, Boost,
+# OpenSSL) from the system include paths, so ParseDcm.h / definitions.h parse
+# as long as those development packages are installed.
 #
 # Run from the repository root:
 #   mrdocs --config=docs/mrdocs.yml
@@ -19,20 +20,18 @@ source-root: ..
 input:
   - ../Lib/src
 
-# Header search paths. These match the public include directories declared in
-# Lib/CMakeLists.txt (the library's own src/) plus the transitive public
-# dependencies surfaced by ParseDcm.h (Poco::XML) and the implementation
-# headers (Boost, OpenSSL) that libclang needs to fully resolve the AST.
+# Header search paths. The library's own src/ is declared PUBLIC in
+# Lib/CMakeLists.txt and must be on the path so ParseDcm.h can find
+# definitions.h. The transitive public dependencies (Poco::XML, Boost,
+# OpenSSL) are resolved by libclang from the system include directories once
+# the matching -dev packages are installed (libpoco-dev, libboost-all-dev,
+# libssl-dev on Debian/Ubuntu).
 #
-# When running locally against a vcpkg-installed tree, point MRDOCS_INCLUDES
-# at the vcpkg_installed/<triplet>/include directory, e.g.:
-#   MRDOCS_INCLUDES="$PWD/builds/ninja-release-vcpkg/vcpkg_installed/x64-linux/include"
-# In CI (.github/workflows/docs.yml) this is populated from a vcpkg manifest
-# install so the docs job never has to compile the library.
+# For a local build against a vcpkg-installed tree instead of system packages,
+# add the vcpkg include directory here, e.g.:
+#   - ../builds/ninja-release-vcpkg/vcpkg_installed/x64-linux/include
 includes:
   - ../Lib/src
-  # vcpkg-installed public headers (Poco, Boost, OpenSSL) injected via CI.
-  - ${env:MRDOCS_INCLUDES}
 
 # Only document the public namespace. The detail namespace and CLI/python
 # translation units are implementation and stay out of the reference.
