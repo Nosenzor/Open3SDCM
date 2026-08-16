@@ -1,0 +1,79 @@
+name: Docs
+
+# Builds the C++ API reference with MrDocs (https://github.com/cppalliance/mrdocs)
+# and uploads the generated HTML site as a workflow artifact.
+#
+# MrDocs parses the public headers (Lib/src/ParseDcm.h, Lib/src/definitions.h)
+# with libclang, so it only needs the header search paths for the library's
+# transitive public dependencies (Poco, Boost, OpenSSL). Those are installed
+# from the Ubuntu system packages, which keeps the job fast and independent of
+# the CMake/vcpkg build matrix.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Lib/src/**'
+      - 'docs/mrdocs.yml'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - 'Lib/src/**'
+      - 'docs/mrdocs.yml'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+jobs:
+  mrdocs:
+    name: Build API reference
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install header dependencies
+        run: |
+          sudo apt-get update
+          # MrDocs only needs the public headers to parse the API surface:
+          # Poco::XML (referenced by ParseDcm.h), Boost and OpenSSL (referenced
+          # by the implementation headers). System packages are sufficient.
+          sudo apt-get install -y \
+            libpoco-dev \
+            libboost-all-dev \
+            libssl-dev
+
+      - name: Download MrDocs
+        shell: bash
+        run: |
+          set -euo pipefail
+          # MrDocs ships prebuilt binaries for every release; pin the version
+          # and download the Linux tarball.
+          MRDOCS_VERSION="0.8.0"
+          archive="MrDocs-${MRDOCS_VERSION}-Linux.tar.gz"
+          curl -fL -o "${archive}" \
+            "https://github.com/cppalliance/mrdocs/releases/download/v${MRDOCS_VERSION}/${archive}"
+          tar -xzf "${archive}"
+          # The archive layout has changed between releases; locate the
+          # executable by name rather than assuming a fixed path.
+          mrdocs_bin="$(find . -type f -name mrdocs | head -1)"
+          if [ -z "${mrdocs_bin}" ]; then
+            echo "::error::mrdocs binary not found in the extracted archive"
+            find . -maxdepth 3 -type f | head -50
+            exit 1
+          fi
+          chmod +x "${mrdocs_bin}"
+          echo "MRDOCS_BIN=${mrdocs_bin}" >> "$GITHUB_ENV"
+
+      - name: Generate API reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${MRDOCS_BIN}" --config=docs/mrdocs.yml
+
+      - name: Upload generated docs
+        uses: actions/upload-artifact@v4
+        with:
+          name: open3sdcm-api-reference
+          path: docs-build/
+          if-no-files-found: error
+          retention-days: 30
