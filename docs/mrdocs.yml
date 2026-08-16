@@ -54,6 +54,10 @@ implementation-defined:
 # Emit a multi-page HTML site under docs-build/html.
 generator: html
 multipage: true
+# Output directory (relative to source-root). The default is
+# <config-dir>/reference-output; pin it so the CI upload step can find
+# the generated pages.
+output: ../docs-build
 
 # Fail loudly on unresolved symbols so the docs job surfaces parsing problems
 # instead of silently dropping members from the reference.
