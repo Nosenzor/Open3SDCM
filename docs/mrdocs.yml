@@ -19,22 +19,30 @@ source-root: ..
 input:
   - ../Lib/src
 
-# Header search paths. The library's own src/ is declared PUBLIC in
+# Project header search path. The library's own src/ is declared PUBLIC in
 # Lib/CMakeLists.txt and must be on the path so ParseDcm.h can find
-# definitions.h. The transitive public dependencies (Poco::XML, Boost,
-# OpenSSL) are installed via the matching -dev packages (libpoco-dev,
-# libboost-all-dev, libssl-dev on Debian/Ubuntu); the system include
-# directories must be listed explicitly because MrDocs' "scanned" mode
-# synthesizes a compilation database without the compiler's default
-# system search paths.
+# definitions.h.
+includes:
+  - ../Lib/src
+
+# System header search paths. MrDocs' scanned mode synthesizes a compilation
+# database without the compiler's default system search paths, so the
+# transitive public dependencies (Poco::XML, Boost, OpenSSL from the matching
+# -dev packages) and the C standard library (glibc) must be listed here as
+# system headers so libclang resolves them. MrDocs bundles the libc++ C++
+# standard library headers; they #include the C headers from glibc, which is
+# why /usr/include must be a system include path.
 #
 # For a local build against a vcpkg-installed tree instead of system packages,
 # replace the /usr/include entries below with the vcpkg include directory, e.g.:
 #   - ../builds/ninja-release-vcpkg/vcpkg_installed/x64-linux/include
-includes:
-  - ../Lib/src
+system-includes:
   - /usr/include
   - /usr/include/x86_64-linux-gnu
+
+# Use the system C standard library (glibc); MrDocs still bundles the libc++
+# C++ standard library headers for reproducibility.
+use-system-libc: true
 
 # Only document the public namespace. The detail namespace and CLI/python
 # translation units are implementation and stay out of the reference.
