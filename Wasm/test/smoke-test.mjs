@@ -10,7 +10,7 @@
 // bit-identical; facet normals may differ in the last bits (cross-ISA
 // floating-point rounding).
 
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -60,7 +60,8 @@ if (!hasCli) {
 }
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "open3sdcm-smoke-"));
-execSync(`"${cliPath}" -i "${dcmPath}" -o "${tmp}" -f stl`, { stdio: "pipe" });
+// execFileSync: the paths are passed as argv, never through a shell.
+execFileSync(cliPath, ["-i", dcmPath, "-o", tmp, "-f", "stl"], { stdio: "pipe" });
 const nativeStl = fs.readdirSync(tmp)
     .map((d) => path.join(tmp, d, path.basename(dcmPath).replace(/\.dcm$/i, ".stl")))
     .find((f) => fs.existsSync(f));
@@ -77,15 +78,26 @@ if (native.length !== stl.length) {
 const facets = stl.readUInt32LE(80);
 let normalDiffs = 0;
 let vertexDiffs = 0;
+let maxNormalDelta = 0;
 for (let i = 0; i < facets; i++) {
   const base = 84 + i * 50;
   for (let c = 0; c < 4; c++) {
     const off = base + c * 12;
     for (let k = 0; k < 12; k += 4) {
-      const d = Math.abs(stl.readFloatLE(off + k) - native.readFloatLE(off + k));
-      if (d > 0) {
-        if (c === 0) normalDiffs++;
-        else vertexDiffs++;
+      const a = stl.readFloatLE(off + k);
+      const b = native.readFloatLE(off + k);
+      if (c > 0 && (a !== b)) vertexDiffs++;
+      if (c === 0) {
+        // Facet normals are computed floats and may legitimately differ in
+        // the last bits across ISAs - but only within this tolerance, and
+        // never by becoming non-finite.
+        const delta = Math.abs(a - b);
+        if (delta > 0) normalDiffs++;
+        if (!Number.isFinite(a) || !Number.isFinite(b) || delta > 1e-5) {
+          console.error(`FAIL: facet ${i} normal out of tolerance (wasm ${a}, native ${b})`);
+          process.exit(1);
+        }
+        maxNormalDelta = Math.max(maxNormalDelta, delta);
       }
     }
   }
@@ -96,6 +108,6 @@ if (vertexDiffs !== 0) {
 }
 console.log(
     `native cross-check ok: ${facets} facets, vertex coordinates bit-identical ` +
-    `(${normalDiffs} normals differ in last bits only)`);
+    `(${normalDiffs} normals differ, max delta ${maxNormalDelta.toExponential(2)} <= 1e-5)`);
 fs.rmSync(tmp, { recursive: true, force: true });
 process.exit(0);

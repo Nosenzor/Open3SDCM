@@ -151,4 +151,5 @@ footer {
 
 footer a { color: var(--accent); text-decoration: none; }
 
+#status.error { color: #ff7a7a; }
 #mesh-info.error { color: #ff7a7a; }

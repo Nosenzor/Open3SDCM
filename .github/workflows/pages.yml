@@ -94,7 +94,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p site
-          cp web/index.html web/app.js web/style.css site/
+          cp -r web/. site/
           cp builds/wasm-release/bin/open3sdcm.js site/
           cp builds/wasm-release/bin/open3sdcm.wasm site/
           ls -lah site

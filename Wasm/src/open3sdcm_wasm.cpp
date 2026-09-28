@@ -54,16 +54,70 @@ namespace
     return nullptr;
   }
 
-  const Open3SDCM::EmbeddedTextureImage* FindTextureImage(const Open3SDCM::SurfaceData& surface)
+  // Mirrors the library's own exporter logic (detail::FindTextureBinding in
+  // ParseDcm.cpp): an embedded image and a UV set are only paired when their
+  // IDs reference each other, so multi-texture scans cannot end up with
+  // coordinates of one texture sampled through another image.
+  struct TextureBinding
   {
-    for (const auto& candidate : surface.textureImages)
+    const Open3SDCM::TextureCoordinateData* coordinates{nullptr};
+    const Open3SDCM::EmbeddedTextureImage* image{nullptr};
+  };
+
+  const Open3SDCM::TextureCoordinateData* FindTextureCoordinatesById(
+      const Open3SDCM::SurfaceData& surface,
+      const std::optional<std::string>& textureCoordId,
+      const std::optional<std::string>& textureId)
+  {
+    const auto matchesCoordId = [&](const Open3SDCM::TextureCoordinateData& candidate)
     {
-      if (!candidate.imageBytes.empty())
+      return textureCoordId.has_value() && candidate.textureCoordId == textureCoordId &&
+             candidate.HasDecodedCoordinates();
+    };
+    const auto matchesTextureId = [&](const Open3SDCM::TextureCoordinateData& candidate)
+    {
+      return textureId.has_value() && candidate.textureId == textureId &&
+             candidate.HasDecodedCoordinates();
+    };
+
+    for (const auto& candidate : surface.textureCoordinates)
+    {
+      if (matchesCoordId(candidate))
       {
         return &candidate;
       }
     }
-    return nullptr;
+    for (const auto& candidate : surface.textureCoordinates)
+    {
+      if (matchesTextureId(candidate))
+      {
+        return &candidate;
+      }
+    }
+    return FindDecodedCoordinates(surface);
+  }
+
+  TextureBinding FindTextureBinding(const Open3SDCM::SurfaceData& surface)
+  {
+    for (const auto& textureImage : surface.textureImages)
+    {
+      if (textureImage.imageBytes.empty())
+      {
+        continue;
+      }
+      const auto* coordinates =
+          FindTextureCoordinatesById(surface, textureImage.refTextureCoordId, textureImage.textureId);
+      if (coordinates != nullptr)
+      {
+        return {coordinates, &textureImage};
+      }
+    }
+    const auto* coordinates = FindTextureCoordinatesById(surface, std::nullopt, std::nullopt);
+    if (coordinates != nullptr && !surface.textureImages.empty())
+    {
+      return {coordinates, &surface.textureImages.front()};
+    }
+    return {};
   }
 
   std::string ExtensionFor(const std::string& format)
@@ -129,6 +183,7 @@ namespace
       }
       std::error_code ec;
       fs::remove(kInputPath, ec);
+      binding_ = FindTextureBinding(parser_.m_SurfaceData);
     }
 
     bool hasMesh() const { return !parser_.m_Vertices.empty() && !parser_.m_Triangles.empty(); }
@@ -157,28 +212,30 @@ namespace
       return color.has_value() ? static_cast<int>(color->PackedRGB()) : -1;
     }
 
-    /// Raw bytes of the first embedded texture image (typically JPEG),
-    /// empty when the scan has none. View; call .slice() to keep.
+    /// Raw bytes of the embedded texture image (typically JPEG) that is
+    /// paired with the UV set returned by uv() (both are matched by
+    /// texture/coordinate IDs the same way the library's own OBJ exporter
+    /// does). Empty when the scan has none. View; call .slice() to keep.
     em::val textureImage()
     {
       readBuffer_.clear();
-      if (const auto* image = FindTextureImage(parser_.m_SurfaceData))
+      if (binding_.image != nullptr)
       {
-        readBuffer_.assign(image->imageBytes.begin(), image->imageBytes.end());
+        readBuffer_.assign(binding_.image->imageBytes.begin(), binding_.image->imageBytes.end());
       }
       return ByteView(readBuffer_);
     }
 
-    /// Per-corner UV pairs (u0, v0, u1, v1, ...); NaN marks a corner whose
-    /// coordinate could not be decoded. Empty when the scan has none.
-    /// View; call .slice() to keep.
+    /// Per-corner UV pairs (u0, v0, u1, v1, ...) of the texture's own
+    /// coordinate set; NaN marks a corner whose coordinate could not be
+    /// decoded. Empty when the scan has none. View; call .slice() to keep.
     em::val uv()
     {
       uvBuffer_.clear();
-      if (const auto* coords = FindDecodedCoordinates(parser_.m_SurfaceData))
+      if (binding_.coordinates != nullptr)
       {
-        uvBuffer_.reserve(coords->cornerCoordinates.size() * 2);
-        for (const auto& corner : coords->cornerCoordinates)
+        uvBuffer_.reserve(binding_.coordinates->cornerCoordinates.size() * 2);
+        for (const auto& corner : binding_.coordinates->cornerCoordinates)
         {
           uvBuffer_.push_back(corner.has_value() ? corner->u : std::numeric_limits<float>::quiet_NaN());
           uvBuffer_.push_back(corner.has_value() ? corner->v : std::numeric_limits<float>::quiet_NaN());
@@ -291,6 +348,9 @@ namespace
     }
 
     Open3SDCM::DCMParser parser_;
+    // Texture image + UV set paired by IDs (computed once per parse), so
+    // textureImage() and uv() always describe the same texture.
+    TextureBinding binding_;
     // Reused scratch buffers so the returned views stay valid until the next
     // call on this parser.
     std::string readBuffer_;

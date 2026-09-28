@@ -6,11 +6,14 @@
   <title>Open3SDCM — DCM viewer (WebAssembly)</title>
   <meta name="description" content="Convert and view 3Shape DCM dental scans entirely in your browser.">
   <link rel="stylesheet" href="style.css">
+  <!-- three.js is vendored (web/vendor/three) rather than loaded from a CDN:
+       the page reads dental scans locally and promises not to send them
+       anywhere, which only holds if no third-party script can change. -->
   <script type="importmap">
     {
       "imports": {
-        "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
-        "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+        "three": "./vendor/three/three.module.js",
+        "three/addons/": "./vendor/three/addons/"
       }
     }
   </script>
@@ -25,7 +28,7 @@
     <section id="controls">
       <label id="file-button" class="button" for="file-input">Choose .dcm file</label>
       <input id="file-input" type="file" accept=".dcm" hidden>
-      <span id="status">Loading WebAssembly module…</span>
+      <span id="status" role="status" aria-live="polite">Loading WebAssembly module…</span>
 
       <div id="export" aria-hidden="true">
         <button id="export-stl" class="button" disabled>Save STL</button>

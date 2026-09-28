@@ -92,8 +92,8 @@ createOpen3SDCM()
 
 function setStatus(text, isError = false) {
   els.status.textContent = text;
+  els.status.classList.toggle("error", isError);
   els.meshInfo.textContent = "";
-  els.meshInfo.classList.toggle("error", isError);
 }
 
 function clearMesh() {
@@ -211,8 +211,13 @@ async function buildMesh() {
     // The library embeds the image bytes as-is, typically JPEG (the
     // format also allows PNG); sniff the magic bytes for the blob type.
     const isPng = textureBytes[0] === 0x89 && textureBytes[1] === 0x50;
+    // The DCM's UVs use a top-left image origin; app.js converts them to
+    // three.js's bottom-left convention, so the image itself must be flipped
+    // to match - and for ImageBitmap textures three.js ignores Texture.flipY,
+    // the flip has to be baked in here.
     const bitmap = await createImageBitmap(
-        new Blob([textureBytes], { type: isPng ? "image/png" : "image/jpeg" }));
+        new Blob([textureBytes], { type: isPng ? "image/png" : "image/jpeg" }),
+        { imageOrientation: "flipY" });
     const texture = new THREE.Texture(bitmap);
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.needsUpdate = true;

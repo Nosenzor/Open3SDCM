@@ -23,7 +23,13 @@ const { default: createOpen3SDCM } = await import(`file://${moduleJs}`);
 const Open3SDCM = await createOpen3SDCM();
 check("module loads with FS runtime method exported", typeof Open3SDCM.FS?.readdir === "function");
 
-for (const dcm of process.argv.slice(2)) {
+const fixtures = process.argv.slice(2);
+if (fixtures.length === 0) {
+  console.error("FAIL: no DCM fixtures given - usage: node web-demo-test.mjs <scan.dcm> [...]");
+  process.exit(1);
+}
+
+for (const dcm of fixtures) {
   console.log(`\n== ${dcm}`);
   const parser = new Open3SDCM.DCMParser();
   parser.parseBytes(new Uint8Array(fs.readFileSync(dcm)));
@@ -48,6 +54,19 @@ for (const dcm of process.argv.slice(2)) {
   check(`${dcm}: all triangle indices address the vertex buffer`, indicesOk);
   check(`${dcm}: uv count matches triangle corners`,
         !hasUvs || rawUvs.length === triCount * 3 * 2);
+
+  // UV values: undecoded corners are NaN by contract, decoded ones must be
+  // finite and inside the unit square (the demo maps NaN to (0,0) and flips
+  // v; both operate on exactly these values).
+  let uvValuesOk = true;
+  for (let i = 0; i < rawUvs.length; i++) {
+    const uv = rawUvs[i];
+    if (Number.isNaN(uv)) continue;
+    if (!Number.isFinite(uv) || uv < 0 || uv > 1) uvValuesOk = false;
+  }
+  check(`${dcm}: decoded UV values are finite within [0, 1]`, !hasUvs || uvValuesOk);
+  check(`${dcm}: texture present only with UVs`,
+        texture.length === 0 || hasUvs);
 
   // Exports through the library writers, and OBJ companion discovery.
   for (const format of ["stl", "ply", "obj"]) {
