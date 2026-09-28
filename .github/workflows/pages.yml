@@ -1,0 +1,105 @@
+name: Pages (WASM demo)
+
+# Builds the Open3SDCM WebAssembly module and deploys the static demo page
+# (web/) to GitHub Pages. The deployed site is fully self-contained:
+# index.html + app.js + the freshly built open3sdcm.{js,wasm} - no backend,
+# uploads stay in the visitor's browser.
+#
+# One-time repository setup: Settings -> Pages -> Build and deployment ->
+# Source must be set to "GitHub Actions".
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'Wasm/**'
+      - 'Lib/src/**'
+      - 'cmake/emscripten/**'
+      - 'ports/poco/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'vcpkg.json'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build WASM demo and deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      VCPKG_FORCE_SYSTEM_BINARIES: '1'
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+          submodules: true
+
+      - name: Install Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Cache vcpkg
+        # Not pinned to a commit hash yet: this and the two Pages actions
+        # below are the only actions in this workflow without a SHA pin.
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.vcpkg-binary-cache
+            ~/vcpkg
+          key: vcpkg-wasm-${{ hashFiles('vcpkg.json', 'cmake/emscripten/**', 'ports/poco/**') }}
+
+      - name: Install Emscripten SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          "$RUNNER_TEMP/emsdk/emsdk" install latest
+          "$RUNNER_TEMP/emsdk/emsdk" activate latest
+          echo "EMSDK=$RUNNER_TEMP/emsdk" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/emsdk/upstream/emscripten" >> "$GITHUB_PATH"
+
+      - name: Configure WASM build
+        env:
+          VCPKG_BINARY_CACHES: ${{ env.HOME }}/.vcpkg-binary-cache
+        run: cmake --preset wasm-release
+
+      - name: Build WASM module
+        env:
+          VCPKG_BINARY_CACHES: ${{ env.HOME }}/.vcpkg-binary-cache
+        run: cmake --build --preset wasm-release --parallel
+
+      - name: Assemble site
+        run: |
+          set -euo pipefail
+          mkdir -p site
+          cp web/index.html web/app.js web/style.css site/
+          cp builds/wasm-release/bin/open3sdcm.js site/
+          cp builds/wasm-release/bin/open3sdcm.wasm site/
+          ls -lah site
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

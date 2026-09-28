@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Open3SDCM — DCM viewer (WebAssembly)</title>
+  <meta name="description" content="Convert and view 3Shape DCM dental scans entirely in your browser.">
+  <link rel="stylesheet" href="style.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <header>
+    <h1>Open3SDCM <span class="wasm-badge">WASM</span></h1>
+    <p>3Shape DCM dental scans, decoded and displayed entirely in your browser. Nothing is uploaded anywhere.</p>
+  </header>
+
+  <main>
+    <section id="controls">
+      <label id="file-button" class="button" for="file-input">Choose .dcm file</label>
+      <input id="file-input" type="file" accept=".dcm" hidden>
+      <span id="status">Loading WebAssembly module…</span>
+
+      <div id="export" aria-hidden="true">
+        <button id="export-stl" class="button" disabled>Save STL</button>
+        <button id="export-ply" class="button" disabled>Save PLY</button>
+        <button id="export-obj" class="button" disabled title="Downloads the .obj plus its .mtl and texture companions">Save OBJ</button>
+      </div>
+    </section>
+
+    <section id="viewer" data-empty="true">
+      <p id="viewer-hint">Drop a .dcm file here, or use the button above.<br>
+        Everything runs locally: parsing (Poco, OpenSSL, zlib compiled to WebAssembly) and rendering (three.js).</p>
+    </section>
+
+    <footer>
+      <span id="mesh-info"></span>
+      <a href="https://github.com/Nosenzor/Open3SDCM" target="_blank" rel="noopener">Open3SDCM on GitHub</a>
+    </footer>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
