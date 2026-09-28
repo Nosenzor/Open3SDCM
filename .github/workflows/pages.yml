@@ -15,6 +15,7 @@ on:
       - 'web/**'
       - 'Wasm/**'
       - 'Lib/src/**'
+      - 'Lib/CMakeLists.txt'
       - 'cmake/emscripten/**'
       - 'ports/poco/**'
       - 'CMakeLists.txt'
@@ -62,28 +63,31 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ~/.vcpkg-binary-cache
+            ${{ github.workspace }}/.vcpkg-binary-cache
             ~/vcpkg
           key: vcpkg-wasm-${{ hashFiles('vcpkg.json', 'cmake/emscripten/**', 'ports/poco/**') }}
 
       - name: Install Emscripten SDK
+        # Pinned (rather than 'latest') so deploys and the release artifact
+        # stay reproducible; 6.0.10 is the version the build was verified
+        # against.
         shell: bash
         run: |
           set -euo pipefail
           git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
-          "$RUNNER_TEMP/emsdk/emsdk" install latest
-          "$RUNNER_TEMP/emsdk/emsdk" activate latest
+          "$RUNNER_TEMP/emsdk/emsdk" install 6.0.10
+          "$RUNNER_TEMP/emsdk/emsdk" activate 6.0.10
           echo "EMSDK=$RUNNER_TEMP/emsdk" >> "$GITHUB_ENV"
           echo "$RUNNER_TEMP/emsdk/upstream/emscripten" >> "$GITHUB_PATH"
 
       - name: Configure WASM build
         env:
-          VCPKG_BINARY_CACHES: ${{ env.HOME }}/.vcpkg-binary-cache
+          VCPKG_BINARY_CACHES: ${{ github.workspace }}/.vcpkg-binary-cache
         run: cmake --preset wasm-release
 
       - name: Build WASM module
         env:
-          VCPKG_BINARY_CACHES: ${{ env.HOME }}/.vcpkg-binary-cache
+          VCPKG_BINARY_CACHES: ${{ github.workspace }}/.vcpkg-binary-cache
         run: cmake --build --preset wasm-release --parallel
 
       - name: Assemble site

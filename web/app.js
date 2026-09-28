@@ -110,6 +110,20 @@ async function loadDcmFile(file) {
   if (!Open3SDCM || busy) return;
   busy = true;
   clearMesh();
+
+  // embind instances are raw C++ pointers: without .delete() the previous
+  // parser and its whole decoded mesh would stay pinned on the wasm heap.
+  parser?.delete();
+  parser = null;
+
+  // Drop files from a previous scan (e.g. its OBJ texture) so the OBJ
+  // export below cannot pick them up as companions of this scan.
+  if (Open3SDCM.FS.analyzePath(OUTPUT_DIR).exists) {
+    for (const stale of Open3SDCM.FS.readdir(OUTPUT_DIR)) {
+      if (stale !== "." && stale !== "..") Open3SDCM.FS.unlink(`${OUTPUT_DIR}/${stale}`);
+    }
+  }
+
   setExportEnabled(false);
   els.viewer.setAttribute("data-empty", "true");
 
@@ -191,11 +205,6 @@ async function buildMesh() {
   });
 
   const packed = parser.baseColor();
-  if (packed >= 0 && !hasUvs) {
-    // The format carries a single mesh-wide tint; without a texture it is all
-    // the colour information there is.
-    material.color.setHex(packed);
-  }
 
   const textureBytes = parser.textureImage().slice();
   if (textureBytes.length && hasUvs) {
@@ -208,6 +217,12 @@ async function buildMesh() {
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.needsUpdate = true;
     material.map = texture;
+  }
+
+  if (!material.map && packed >= 0) {
+    // The format carries a single mesh-wide tint; use it whenever there is
+    // no texture to render.
+    material.color.setHex(packed);
   }
 
   sceneMesh = new THREE.Mesh(geometry, material);

@@ -116,7 +116,17 @@ namespace
     {
       parser_ = Open3SDCM::DCMParser{};
       WriteInputToMemfs(data);
-      parser_.ParseDCM(kInputPath);
+      try
+      {
+        parser_.ParseDCM(kInputPath);
+      }
+      catch (...)
+      {
+        // Never leave the (possibly large) input pinned in MEMFS.
+        std::error_code ec;
+        fs::remove(kInputPath, ec);
+        throw;
+      }
       std::error_code ec;
       fs::remove(kInputPath, ec);
     }
@@ -226,8 +236,14 @@ namespace
 
     void WriteInputToMemfs(const em::val& data)
     {
-      const em::val length = data["length"];
-      const std::size_t size = length.isUndefined() ? 0 : length.as<std::size_t>();
+      // Accept both typed arrays and the raw ArrayBuffer behind them
+      // (fetch().arrayBuffer() etc.); everything downstream handles the
+      // typed-array form, so a bare ArrayBuffer is wrapped in one.
+      em::val bytes = data["length"].isUndefined() && !data["byteLength"].isUndefined()
+          ? em::val::global("Uint8Array").new_(data)
+          : data;
+
+      const std::size_t size = bytes["length"].as<std::size_t>();
 
       std::FILE* file = std::fopen(kInputPath, "wb");
       if (file == nullptr || size == 0)
@@ -239,33 +255,37 @@ namespace
         return;
       }
 
-      const bool isTypedArray = !data["byteOffset"].isUndefined();
-      if (isTypedArray && IsHeapView(data))
+      const bool isTypedArray = !bytes["byteOffset"].isUndefined();
+      if (isTypedArray && IsHeapView(bytes))
       {
         // Heap view: the byteOffset is a WebAssembly address, copy directly.
-        const auto* src = reinterpret_cast<const std::uint8_t*>(data["byteOffset"].as<std::uint32_t>());
-        std::fwrite(src, 1, size, file);
+        // byteLength (not the element count) is the number of bytes to copy,
+        // so non-Uint8 heap views are handled correctly too.
+        const auto byteSize = bytes["byteLength"].as<std::size_t>();
+        const auto* src = reinterpret_cast<const std::uint8_t*>(bytes["byteOffset"].as<std::uint32_t>());
+        std::fwrite(src, 1, byteSize, file);
       }
       else if (isTypedArray)
       {
         // External ArrayBuffer: have JS copy it into the WebAssembly heap
         // with Uint8Array.prototype.set (native-speed memcpy). HEAPU8 is
         // fetched after malloc, which may have grown the heap.
-        void* const dst = std::malloc(size);
+        const auto byteSize = bytes["byteLength"].as<std::size_t>();
+        void* const dst = std::malloc(byteSize);
         em::val::module_property("HEAPU8")
-            .call<void>("set", data, static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(dst)));
-        std::fwrite(dst, 1, size, file);
+            .call<void>("set", bytes, static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(dst)));
+        std::fwrite(dst, 1, byteSize, file);
         std::free(dst);
       }
       else
       {
         // Plain JS array: element-wise fallback.
-        std::vector<std::uint8_t> bytes(size);
+        std::vector<std::uint8_t> staged(size);
         for (std::size_t i = 0; i < size; ++i)
         {
-          bytes[i] = data[i].as<std::uint8_t>();
+          staged[i] = bytes[i].as<std::uint8_t>();
         }
-        std::fwrite(bytes.data(), 1, size, file);
+        std::fwrite(staged.data(), 1, size, file);
       }
       std::fclose(file);
     }

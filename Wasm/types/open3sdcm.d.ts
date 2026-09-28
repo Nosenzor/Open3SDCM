@@ -23,10 +23,10 @@ export interface DCMParser {
   /**
    * Parses a DCM archive held in memory. Accepts a Uint8Array
    * (recommended, works for both external ArrayBuffers and WASM-heap
-   * views) or a plain array of byte values. Any previously parsed state
-   * is cleared first.
+   * views), a raw ArrayBuffer, or a plain array of byte values. Any
+   * previously parsed state is cleared first.
    */
-  parseBytes(data: Uint8Array | ArrayLike<number>): void;
+  parseBytes(data: Uint8Array | ArrayBuffer | ArrayLike<number>): void;
 
   /** True when the last parse produced a non-empty mesh. */
   hasMesh(): boolean;
@@ -72,17 +72,20 @@ export interface DCMParser {
    * use exportMeshTo()/readFile() to fetch the companion .mtl/texture.
    * VIEW: call .slice() to keep. Empty on failure or an empty mesh.
    *
-   * @param format   "stl" (alias "stlb"), "ply" or "obj". Defaults to "stl".
-   * @param baseName File name without extension. Defaults to "mesh".
+   * @param format   "stl" (alias "stlb"), "ply" or "obj".
+   * @param baseName File name without extension.
    */
-  exportMeshBytes(format?: string, baseName?: string): Uint8Array;
+  exportMeshBytes(format: string, baseName: string): Uint8Array;
 
   /**
    * Writes the mesh to any path of the Emscripten virtual filesystem
    * (e.g. an IDBFS mount set up through the FS runtime method). Returns
    * the library's success flag.
+   *
+   * @param virtualPath Destination file path (e.g. "/out/mesh.stl").
+   * @param format       "stl" (alias "stlb"), "ply" or "obj".
    */
-  exportMeshTo(virtualPath: string, format?: string): boolean;
+  exportMeshTo(virtualPath: string, format: string): boolean;
 
   /**
    * Reads any file from the Emscripten virtual filesystem.

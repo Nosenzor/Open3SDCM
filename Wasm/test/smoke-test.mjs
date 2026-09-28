@@ -64,6 +64,10 @@ execSync(`"${cliPath}" -i "${dcmPath}" -o "${tmp}" -f stl`, { stdio: "pipe" });
 const nativeStl = fs.readdirSync(tmp)
     .map((d) => path.join(tmp, d, path.basename(dcmPath).replace(/\.dcm$/i, ".stl")))
     .find((f) => fs.existsSync(f));
+if (!nativeStl) {
+  console.error(`FAIL: desktop CLI produced no .stl in ${tmp}`);
+  process.exit(1);
+}
 const native = fs.readFileSync(nativeStl);
 
 if (native.length !== stl.length) {

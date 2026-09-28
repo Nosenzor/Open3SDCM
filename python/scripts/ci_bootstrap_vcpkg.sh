@@ -4,9 +4,10 @@
 # Usage: ci_bootstrap_vcpkg.sh <triplet> <root-dir>
 #
 # Deliberately uses vcpkg's classic mode rather than the repository manifest:
-# the root vcpkg.json also pulls in assimp, spdlog, fmt and boost-test for the
-# CLI and test tools, none of which the bindings link against. Building only
-# what Lib/CMakeLists.txt actually needs keeps wheel CI substantially shorter.
+# the root vcpkg.json's 'cli'/'tests' features add assimp, spdlog, fmt and
+# boost-test for the CLI and test tools, none of which the bindings link
+# against. Building only what Lib/CMakeLists.txt actually needs keeps wheel CI
+# substantially shorter.
 set -euo pipefail
 
 TRIPLET="${1:?expected a vcpkg triplet as the first argument}"

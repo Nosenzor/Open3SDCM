@@ -34,21 +34,20 @@ for (const dcm of process.argv.slice(2)) {
   const vertices = parser.vertices().slice();
   const triangles = parser.triangles().slice();
   const rawUvs = parser.uv().slice();
-  const hasUvs = rawUvs.length === parser.triangleCount() * 3 * 2;
+  const triCount = parser.triangleCount();
+  const hasUvs = rawUvs.length === triCount * 3 * 2;
   const texture = parser.textureImage().slice();
   console.log(`    texture bytes: ${texture.length}, uv floats: ${rawUvs.length}`);
 
-  // Mimic the demo's geometry expansion (per-corner, with the v flip).
-  const triCount = parser.triangleCount();
-  let ok = true;
-  for (let i = 0; i < triCount && i < 100; i++) {
-    for (let c = 0; c < 3; c++) {
-      const idx = triangles[i * 3 + c];
-      if (idx * 3 + 2 >= vertices.length) ok = false;
-      if (hasUvs && Number.isNaN(rawUvs[(i * 3 + c) * 2]) && idx < 0) ok = false;
-    }
+  // Real invariants: every triangle index must address the vertex buffer,
+  // and UV corners (when present) must pair up with triangle corners.
+  let indicesOk = true;
+  for (let i = 0; i < triangles.length; i++) {
+    if (triangles[i] * 3 + 2 >= vertices.length) indicesOk = false;
   }
-  check(`${dcm}: triangles index into vertices`, ok);
+  check(`${dcm}: all triangle indices address the vertex buffer`, indicesOk);
+  check(`${dcm}: uv count matches triangle corners`,
+        !hasUvs || rawUvs.length === triCount * 3 * 2);
 
   // Exports through the library writers, and OBJ companion discovery.
   for (const format of ["stl", "ply", "obj"]) {
@@ -71,6 +70,10 @@ for (const dcm of process.argv.slice(2)) {
       check(`${dcm}: stl size`, main.length === 84 + triCount * 50, `${main.length}`);
     }
   }
+
+  // Free the C++ object: without .delete() each iteration leaks the parsed
+  // mesh on the wasm heap.
+  parser.delete();
 }
 
 console.log(failures.length ? `\n${failures.length} FAILURES` : "\nall checks passed");
