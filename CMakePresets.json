@@ -87,6 +87,25 @@
           "value": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
         }
       }
+    },
+    {
+      "name": "wasm-release",
+      "displayName": "WASM Release (Emscripten + vcpkg)",
+      "description": "Cross-compile the library and its embind bindings to WebAssembly via vcpkg's wasm32-emscripten triplet. Requires an activated emsdk (source <emsdk>/emsdk_env.sh so emcc is in PATH and EMSDK is set) and ninja.",
+      "binaryDir": "${sourceDir}/builds/${presetName}",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "VCPKG_TARGET_TRIPLET": "wasm32-emscripten",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/emscripten",
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/ports",
+        "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/cmake/emscripten/emscripten-toolchain.cmake",
+        "Open3SDCM_BUILD_TESTS": {
+          "type": "BOOL",
+          "value": "OFF"
+        },
+        "CMAKE_MAKE_PROGRAM": "ninja"
+      }
     }
   ],
   "buildPresets": [
@@ -125,6 +144,12 @@
       "configurePreset": "msbuild-vcpkg",
       "displayName": "Build MSBuild",
       "description": "Build with MSBuild (VS)"
+    },
+    {
+      "name": "wasm-release",
+      "configurePreset": "wasm-release",
+      "displayName": "Build WASM (Emscripten)",
+      "description": "Cross-compile the library and its embind bindings to WebAssembly"
     }
   ],
   "testPresets": [

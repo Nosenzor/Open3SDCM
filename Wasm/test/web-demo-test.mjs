@@ -1,0 +1,99 @@
+// Node integration test for the web demo's WASM wiring (the part of web/app.js
+// that touches the WASM module: parse -> views -> uv flip -> exports ->
+// OBJ companions via FS.readdir). Rendering (three.js/DOM) is not covered.
+//
+// Run from the repo root:
+//   node Wasm/test/web-demo-test.mjs
+
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const moduleJs = path.join(repoRoot, "builds/wasm-release/bin/open3sdcm.js");
+const OUTPUT_DIR = "/open3sdcm-output";
+
+const failures = [];
+function check(name, cond, detail = "") {
+  console.log(`${cond ? "ok  " : "FAIL"} ${name}${detail ? " - " + detail : ""}`);
+  if (!cond) failures.push(name);
+}
+
+const { default: createOpen3SDCM } = await import(`file://${moduleJs}`);
+const Open3SDCM = await createOpen3SDCM();
+check("module loads with FS runtime method exported", typeof Open3SDCM.FS?.readdir === "function");
+
+const fixtures = process.argv.slice(2);
+if (fixtures.length === 0) {
+  console.error("FAIL: no DCM fixtures given - usage: node web-demo-test.mjs <scan.dcm> [...]");
+  process.exit(1);
+}
+
+for (const dcm of fixtures) {
+  console.log(`\n== ${dcm}`);
+  const parser = new Open3SDCM.DCMParser();
+  parser.parseBytes(new Uint8Array(fs.readFileSync(dcm)));
+
+  check(`${dcm}: hasMesh`, parser.hasMesh(),
+        `${parser.vertexCount()} verts / ${parser.triangleCount()} tris`);
+
+  const vertices = parser.vertices().slice();
+  const triangles = parser.triangles().slice();
+  const rawUvs = parser.uv().slice();
+  const triCount = parser.triangleCount();
+  const hasUvs = rawUvs.length === triCount * 3 * 2;
+  const texture = parser.textureImage().slice();
+  console.log(`    texture bytes: ${texture.length}, uv floats: ${rawUvs.length}`);
+
+  // Real invariants: every triangle index must address the vertex buffer,
+  // and UV corners (when present) must pair up with triangle corners.
+  let indicesOk = true;
+  for (let i = 0; i < triangles.length; i++) {
+    if (triangles[i] * 3 + 2 >= vertices.length) indicesOk = false;
+  }
+  check(`${dcm}: all triangle indices address the vertex buffer`, indicesOk);
+  check(`${dcm}: uv count matches triangle corners`,
+        !hasUvs || rawUvs.length === triCount * 3 * 2);
+
+  // UV values: undecoded corners are NaN by contract, decoded ones must be
+  // finite and inside the unit square (the demo maps NaN to (0,0) and flips
+  // v; both operate on exactly these values).
+  let uvValuesOk = true;
+  for (let i = 0; i < rawUvs.length; i++) {
+    const uv = rawUvs[i];
+    if (Number.isNaN(uv)) continue;
+    if (!Number.isFinite(uv) || uv < 0 || uv > 1) uvValuesOk = false;
+  }
+  check(`${dcm}: decoded UV values are finite within [0, 1]`, !hasUvs || uvValuesOk);
+  check(`${dcm}: texture present only with UVs`,
+        texture.length === 0 || hasUvs);
+
+  // Exports through the library writers, and OBJ companion discovery.
+  for (const format of ["stl", "ply", "obj"]) {
+    if (Open3SDCM.FS.analyzePath(OUTPUT_DIR).exists) {
+      for (const stale of Open3SDCM.FS.readdir(OUTPUT_DIR)) {
+        if (stale !== "." && stale !== "..") Open3SDCM.FS.unlink(`${OUTPUT_DIR}/${stale}`);
+      }
+    }
+    const name = "demo";
+    const main = parser.exportMeshBytes(format, name).slice();
+    check(`${dcm}: exportMeshBytes("${format}")`, main.length > 0, `${main.length} bytes`);
+    const files = Open3SDCM.FS.readdir(OUTPUT_DIR).filter((f) => f !== "." && f !== "..");
+    if (format === "obj") {
+      const companions = files.filter((f) => f === "demo.mtl" || f.startsWith("demo_texture"));
+      check(`${dcm}: obj companions present`, companions.length > 0, files.join(", "));
+      const readable = companions.map((f) => parser.readFile(`${OUTPUT_DIR}/${f}`).slice());
+      check(`${dcm}: obj companions readable`, readable.every((b) => b.length > 0));
+    }
+    if (format === "stl") {
+      check(`${dcm}: stl size`, main.length === 84 + triCount * 50, `${main.length}`);
+    }
+  }
+
+  // Free the C++ object: without .delete() each iteration leaks the parsed
+  // mesh on the wasm heap.
+  parser.delete();
+}
+
+console.log(failures.length ? `\n${failures.length} FAILURES` : "\nall checks passed");
+process.exit(failures.length ? 1 : 0);

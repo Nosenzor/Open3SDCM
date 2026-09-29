@@ -206,3 +206,71 @@ jobs:
         env:
           ASAN_OPTIONS: halt_on_error=1:abort_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:abort_on_error=1:print_stacktrace=1
+
+  wasm:
+    name: Build / WebAssembly
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      VCPKG_FORCE_SYSTEM_BINARIES: '1'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: false
+          swap-storage: true
+
+      - name: Install Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      # Same cache key as pages.yml / release.yml, so a warm cache is shared
+      # between CI, the Pages deploy and the release build.
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.vcpkg-binary-cache
+            ~/vcpkg
+          key: vcpkg-wasm-${{ hashFiles('vcpkg.json', 'cmake/emscripten/**', 'ports/poco/**') }}
+
+      # Pinned (rather than 'latest') so CI tests the same emscripten the
+      # Pages deploy and the release artifact are built with.
+      - name: Install Emscripten SDK
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          "$RUNNER_TEMP/emsdk/emsdk" install 6.0.10
+          "$RUNNER_TEMP/emsdk/emsdk" activate 6.0.10
+          echo "EMSDK=$RUNNER_TEMP/emsdk" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/emsdk/upstream/emscripten" >> "$GITHUB_PATH"
+
+      - name: Configure WASM build
+        env:
+          VCPKG_BINARY_CACHES: ${{ github.workspace }}/.vcpkg-binary-cache
+        run: cmake --preset wasm-release
+
+      - name: Build WASM module
+        env:
+          VCPKG_BINARY_CACHES: ${{ github.workspace }}/.vcpkg-binary-cache
+        run: cmake --build --preset wasm-release --parallel
+
+      - name: Smoke-test the WASM module (Node)
+        env:
+          VCPKG_BINARY_CACHES: ${{ github.workspace }}/.vcpkg-binary-cache
+        run: |
+          node Wasm/test/web-demo-test.mjs \
+            TestData/Handle/HandleAngledLarge.dcm \
+            "TestData/Hole3x5/Hole 3x5.dcm" \
+            TestData/real-world/scan_040.dcm

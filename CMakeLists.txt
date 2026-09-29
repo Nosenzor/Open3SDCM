@@ -45,6 +45,21 @@ run_vcpkg(
     VCPKG_URL "https://github.com/microsoft/vcpkg.git"
 )
 
+# vcpkg manifest feature selection. Must happen before project(): the
+# manifest install runs when the toolchain is loaded at project() time, so
+# VCPKG_MANIFEST_FEATURES is too late anywhere below. The default
+# dependency set is what the library itself needs (poco, openssl, boost);
+# the desktop CLI adds the 'cli' feature (assimp, spdlog,
+# boost-program-options), the test tools add 'tests' (boost-test). The
+# WebAssembly build (wasm32-emscripten triplet) skips both: it only builds
+# the library and its Wasm/ bindings.
+if(NOT VCPKG_TARGET_TRIPLET MATCHES "emscripten")
+  list(APPEND VCPKG_MANIFEST_FEATURES "cli")
+endif()
+if(Open3SDCM_BUILD_TESTS OR FEATURE_TESTS)
+  list(APPEND VCPKG_MANIFEST_FEATURES "tests")
+endif()
+
 
 
 # Set the project name and language
@@ -81,11 +96,6 @@ message("CMAKE_CXX_COMPILER_WORKS = " ${CMAKE_CXX_COMPILER_WORKS})
 option(FEATURE_TESTS "Enable the tests" OFF)
 option(FEATURE_DOCS "Enable the docs" OFF)
 
-# vcpkg test feature
-if(FEATURE_TESTS)
-  list(APPEND VCPKG_MANIFEST_FEATURES "tests")
-endif()
-
 # Enable sanitizers and static analyzers when running the tests
 if(FEATURE_TESTS)
   set(ENABLE_CLANG_TIDY "ENABLE_CLANG_TIDY")
@@ -110,15 +120,29 @@ endif()
 # Initialize project_options variable related to this project
 # This overwrites `project_options` and sets `project_warnings`
 # uncomment to enable the options. Some of them accept one or more inputs:
+#
+# Emscripten: ENABLE_NATIVE_OPTIMIZATION (-march=native), IPO and the
+# MSVC/VS analysis passes are not supported by emcc, so they are disabled
+# for the WebAssembly build.
+if(EMSCRIPTEN)
+  set(Open3SDCM_PROJECT_OPTIONS_VS_ANALYSIS "")
+  set(Open3SDCM_PROJECT_OPTIONS_IPO "")
+  set(Open3SDCM_PROJECT_OPTIONS_NATIVE "")
+else()
+  set(Open3SDCM_PROJECT_OPTIONS_VS_ANALYSIS "ENABLE_VS_ANALYSIS")
+  set(Open3SDCM_PROJECT_OPTIONS_IPO "ENABLE_INTERPROCEDURAL_OPTIMIZATION")
+  set(Open3SDCM_PROJECT_OPTIONS_NATIVE "ENABLE_NATIVE_OPTIMIZATION")
+endif()
+
 project_options(
     PREFIX ${PROJECT_NAME}
     ENABLE_CACHE
     ${ENABLE_CPPCHECK}
     ${ENABLE_CLANG_TIDY}
-    ENABLE_VS_ANALYSIS
+    ${Open3SDCM_PROJECT_OPTIONS_VS_ANALYSIS}
     # ENABLE_CONAN
-    ENABLE_INTERPROCEDURAL_OPTIMIZATION
-    ENABLE_NATIVE_OPTIMIZATION
+    ${Open3SDCM_PROJECT_OPTIONS_IPO}
+    ${Open3SDCM_PROJECT_OPTIONS_NATIVE}
     ${ENABLE_DOXYGEN}
     ${ENABLE_COVERAGE}
     ${ENABLE_SANITIZER_ADDRESS}
@@ -157,11 +181,19 @@ endif()
 
 
 add_subdirectory(Lib)
-add_subdirectory(CLI)
+
+if(EMSCRIPTEN)
+  # WebAssembly build: library + Wasm/ embind bindings instead of the
+  # desktop CLI (assimp/spdlog/program_options are not part of it) and no
+  # desktop test tools.
+  add_subdirectory(Wasm)
+else()
+  add_subdirectory(CLI)
+endif()
 
 set(BUILD_TESTING ${Open3SDCM_BUILD_TESTS} CACHE BOOL "Enable CTest-based tests" FORCE)
 include(CTest)
-if(Open3SDCM_BUILD_TESTS)
+if(Open3SDCM_BUILD_TESTS AND NOT EMSCRIPTEN)
   add_subdirectory(TestTools)
 else()
   # Reconfiguring an existing build tree from tests=ON to tests=OFF can leave

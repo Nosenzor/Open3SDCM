@@ -154,9 +154,86 @@ jobs:
           path: ${{ steps.package.outputs.archive }}
           if-no-files-found: error
 
+  build-wasm:
+    name: Build / WebAssembly
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      VCPKG_FORCE_SYSTEM_BINARIES: '1'
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+          submodules: true
+
+      - name: Install Ninja
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Install Emscripten SDK
+        # Pinned (rather than 'latest') so the release artifact stays
+        # reproducible; 6.0.10 is the version the build was verified against.
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --no-checkout https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          git -C "$RUNNER_TEMP/emsdk" fetch --depth 1 origin a2b92777574c2feda07994cd4f1079a3dfc151f8
+          git -C "$RUNNER_TEMP/emsdk" checkout --detach a2b92777574c2feda07994cd4f1079a3dfc151f8
+          "$RUNNER_TEMP/emsdk/emsdk" install 6.0.10
+          "$RUNNER_TEMP/emsdk/emsdk" activate 6.0.10
+          echo "EMSDK=$RUNNER_TEMP/emsdk" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/emsdk/upstream/emscripten" >> "$GITHUB_PATH"
+
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.vcpkg-binary-cache
+            ~/vcpkg
+          key: vcpkg-wasm-${{ hashFiles('vcpkg.json', 'cmake/emscripten/**', 'ports/poco/**') }}
+
+      - name: Configure WASM build
+        env:
+          VCPKG_BINARY_CACHES: ${{ github.workspace }}/.vcpkg-binary-cache
+        run: cmake --preset wasm-release
+
+      - name: Build WASM module
+        env:
+          VCPKG_BINARY_CACHES: ${{ github.workspace }}/.vcpkg-binary-cache
+        run: cmake --build --preset wasm-release --parallel
+
+      - name: Package WASM release asset
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          archive="Open3SDCM-${{ needs.prepare.outputs.version }}-wasm.tar.gz"
+          mkdir -p release
+          cp builds/wasm-release/bin/open3sdcm.js release/
+          cp builds/wasm-release/bin/open3sdcm.wasm release/
+          cp Wasm/types/open3sdcm.d.ts release/
+
+          pushd release >/dev/null
+          cmake -E tar cfvz "../${archive}" --format=gnutar -- open3sdcm.js open3sdcm.wasm open3sdcm.d.ts
+          popd >/dev/null
+
+          echo "archive=${archive}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-wasm
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+
   publish:
     name: Publish release
-    needs: [prepare, build]
+    needs: [prepare, build, build-wasm]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -178,6 +255,12 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: release-windows
+          path: dist
+
+      - name: Download WASM artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-wasm
           path: dist
 
       - name: Publish GitHub release

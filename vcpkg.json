@@ -4,13 +4,26 @@
   "builtin-baseline": "efb1e7436979a30c4d3e5ab2375fd8e2e461d541",
   "description": "Toolbox for converting 3Shape DCM files into open 3d format",
   "dependencies": [
-    "boost-test",
-    "boost-program-options",
     "boost-dynamic-bitset",
     "fmt",
-    "poco",
-    "spdlog",
-    "assimp",
-    "openssl"
-  ]
+    "openssl",
+    "poco"
+  ],
+  "features": {
+    "cli": {
+      "description": "Desktop command-line tool dependencies",
+      "dependencies": [
+        "assimp",
+        "boost-algorithm",
+        "boost-program-options",
+        "spdlog"
+      ]
+    },
+    "tests": {
+      "description": "Test tool dependencies",
+      "dependencies": [
+        "boost-test"
+      ]
+    }
+  }
 }
