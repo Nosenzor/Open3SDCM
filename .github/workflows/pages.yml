@@ -22,6 +22,18 @@ on:
       - 'CMakePresets.json'
       - 'vcpkg.json'
       - '.github/workflows/pages.yml'
+  pull_request:
+    paths:
+      - 'web/**'
+      - 'Wasm/**'
+      - 'Lib/src/**'
+      - 'Lib/CMakeLists.txt'
+      - 'cmake/emscripten/**'
+      - 'ports/poco/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'vcpkg.json'
+      - '.github/workflows/pages.yml'
   workflow_dispatch:
 
 permissions:
@@ -32,8 +44,59 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  validate:
+    name: Validate WASM build
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      VCPKG_FORCE_SYSTEM_BINARIES: '1'
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+          submodules: true
+
+      - name: Install Ninja
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ github.workspace }}/.vcpkg-binary-cache
+            ~/vcpkg
+          key: vcpkg-wasm-${{ hashFiles('vcpkg.json', 'cmake/emscripten/**', 'ports/poco/**') }}
+
+      - name: Install Emscripten SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --no-checkout https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          git -C "$RUNNER_TEMP/emsdk" fetch --depth 1 origin a2b92777574c2feda07994cd4f1079a3dfc151f8
+          git -C "$RUNNER_TEMP/emsdk" checkout --detach a2b92777574c2feda07994cd4f1079a3dfc151f8
+          "$RUNNER_TEMP/emsdk/emsdk" install 6.0.10
+          "$RUNNER_TEMP/emsdk/emsdk" activate 6.0.10
+          echo "EMSDK=$RUNNER_TEMP/emsdk" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/emsdk/upstream/emscripten" >> "$GITHUB_PATH"
+
+      - name: Configure WASM build
+        env:
+          VCPKG_BINARY_CACHES: ${{ github.workspace }}/.vcpkg-binary-cache
+        run: cmake --preset wasm-release
+
+      - name: Build WASM module
+        env:
+          VCPKG_BINARY_CACHES: ${{ github.workspace }}/.vcpkg-binary-cache
+        run: cmake --build --preset wasm-release --parallel
+
   deploy:
     name: Build WASM demo and deploy
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
@@ -74,7 +137,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          git clone --no-checkout https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          git -C "$RUNNER_TEMP/emsdk" fetch --depth 1 origin a2b92777574c2feda07994cd4f1079a3dfc151f8
+          git -C "$RUNNER_TEMP/emsdk" checkout --detach a2b92777574c2feda07994cd4f1079a3dfc151f8
           "$RUNNER_TEMP/emsdk/emsdk" install 6.0.10
           "$RUNNER_TEMP/emsdk/emsdk" activate 6.0.10
           echo "EMSDK=$RUNNER_TEMP/emsdk" >> "$GITHUB_ENV"
