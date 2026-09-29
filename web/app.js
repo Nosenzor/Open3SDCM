@@ -279,6 +279,13 @@ function download(bytes, filename, mime = "application/octet-stream") {
 
 function exportMesh(format) {
   if (!parser || busy) return;
+  if (format === "obj" && Open3SDCM.FS.analyzePath(OUTPUT_DIR).exists) {
+    for (const entry of Open3SDCM.FS.readdir(OUTPUT_DIR)) {
+      if (entry === `${currentName}.mtl` || entry.startsWith(`${currentName}_texture`)) {
+        Open3SDCM.FS.unlink(`${OUTPUT_DIR}/${entry}`);
+      }
+    }
+  }
   const main = parser.exportMeshBytes(format, currentName).slice();
   if (!main.length) {
     setStatus(`Export failed: the mesh could not be written as ${format.toUpperCase()}.`, true);
