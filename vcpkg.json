@@ -5,7 +5,6 @@
   "description": "Toolbox for converting 3Shape DCM files into open 3d format",
   "dependencies": [
     "boost-dynamic-bitset",
-    "fmt",
     "openssl",
     "poco"
   ],
@@ -16,6 +15,7 @@
         "assimp",
         "boost-algorithm",
         "boost-program-options",
+        "fmt",
         "spdlog"
       ]
     },

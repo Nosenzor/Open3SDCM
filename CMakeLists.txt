@@ -49,15 +49,16 @@ run_vcpkg(
 # manifest install runs when the toolchain is loaded at project() time, so
 # VCPKG_MANIFEST_FEATURES is too late anywhere below. The default
 # dependency set is what the library itself needs (poco, openssl, boost);
-# the desktop CLI adds the 'cli' feature (assimp, spdlog,
-# boost-program-options), the test tools add 'tests' (boost-test). The
-# WebAssembly build (wasm32-emscripten triplet) skips both: it only builds
-# the library and its Wasm/ bindings.
+# the desktop CLI adds the 'cli' feature (assimp, spdlog, fmt,
+# boost-program-options), the test tools add 'tests' (boost-test; they also
+# use the 'cli' libraries). The WebAssembly build (wasm32-emscripten triplet)
+# skips both: it only builds the library and its Wasm/ bindings, and the test
+# tools are never built there.
 if(NOT VCPKG_TARGET_TRIPLET MATCHES "emscripten")
   list(APPEND VCPKG_MANIFEST_FEATURES "cli")
-endif()
-if(Open3SDCM_BUILD_TESTS OR FEATURE_TESTS)
-  list(APPEND VCPKG_MANIFEST_FEATURES "tests")
+  if(Open3SDCM_BUILD_TESTS OR FEATURE_TESTS)
+    list(APPEND VCPKG_MANIFEST_FEATURES "tests")
+  endif()
 endif()
 
 
