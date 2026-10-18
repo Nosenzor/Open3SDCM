@@ -8,20 +8,22 @@
 //    writers write into MEMFS and the bytes are read back to JavaScript.
 //
 // Methods that return mesh data return typed-array VIEWS into WebAssembly
-// memory (zero copy). A view stays valid only until the next call on this
-// parser (or until the parser is deleted): JavaScript code that needs to
-// keep the data must call .slice() on the view synchronously.
+// memory. A view stays valid only until the next call into the module:
+// besides the next call on this parser, any allocation (another parser,
+// another export) may grow the WebAssembly memory, which detaches every
+// outstanding view. JavaScript code that needs to keep the data must call
+// .slice() on the view synchronously.
 
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
 
-#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <filesystem>
 #include <limits>
+#include <memory>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -42,83 +44,21 @@ namespace
   constexpr const char* kInputPath = "/open3sdcm-input.dcm";
   constexpr const char* kOutputDir = "/open3sdcm-output";
 
-  const Open3SDCM::TextureCoordinateData* FindDecodedCoordinates(const Open3SDCM::SurfaceData& surface)
-  {
-    for (const auto& candidate : surface.textureCoordinates)
-    {
-      if (candidate.HasDecodedCoordinates())
-      {
-        return &candidate;
-      }
-    }
-    return nullptr;
-  }
+  using FilePtr = std::unique_ptr<std::FILE, decltype(&std::fclose)>;
 
-  // Mirrors the library's own exporter logic (detail::FindTextureBinding in
-  // ParseDcm.cpp): an embedded image and a UV set are only paired when their
-  // IDs reference each other, so multi-texture scans cannot end up with
-  // coordinates of one texture sampled through another image.
-  struct TextureBinding
+  // Removes the MEMFS input file when a parse ends, including by an
+  // exception, so a (possibly large) scan never stays pinned in memory.
+  struct RemoveInputOnExit
   {
-    const Open3SDCM::TextureCoordinateData* coordinates{nullptr};
-    const Open3SDCM::EmbeddedTextureImage* image{nullptr};
+    RemoveInputOnExit() = default;
+    RemoveInputOnExit(const RemoveInputOnExit&) = delete;
+    RemoveInputOnExit& operator=(const RemoveInputOnExit&) = delete;
+    ~RemoveInputOnExit()
+    {
+      std::error_code ec;
+      fs::remove(kInputPath, ec);
+    }
   };
-
-  const Open3SDCM::TextureCoordinateData* FindTextureCoordinatesById(
-      const Open3SDCM::SurfaceData& surface,
-      const std::optional<std::string>& textureCoordId,
-      const std::optional<std::string>& textureId)
-  {
-    const auto matchesCoordId = [&](const Open3SDCM::TextureCoordinateData& candidate)
-    {
-      return textureCoordId.has_value() && candidate.textureCoordId == textureCoordId &&
-             candidate.HasDecodedCoordinates();
-    };
-    const auto matchesTextureId = [&](const Open3SDCM::TextureCoordinateData& candidate)
-    {
-      return textureId.has_value() && candidate.textureId == textureId &&
-             candidate.HasDecodedCoordinates();
-    };
-
-    for (const auto& candidate : surface.textureCoordinates)
-    {
-      if (matchesCoordId(candidate))
-      {
-        return &candidate;
-      }
-    }
-    for (const auto& candidate : surface.textureCoordinates)
-    {
-      if (matchesTextureId(candidate))
-      {
-        return &candidate;
-      }
-    }
-    return FindDecodedCoordinates(surface);
-  }
-
-  TextureBinding FindTextureBinding(const Open3SDCM::SurfaceData& surface)
-  {
-    for (const auto& textureImage : surface.textureImages)
-    {
-      if (textureImage.imageBytes.empty())
-      {
-        continue;
-      }
-      const auto* coordinates =
-          FindTextureCoordinatesById(surface, textureImage.refTextureCoordId, textureImage.textureId);
-      if (coordinates != nullptr)
-      {
-        return {coordinates, &textureImage};
-      }
-    }
-    const auto* coordinates = FindTextureCoordinatesById(surface, std::nullopt, std::nullopt);
-    if (coordinates != nullptr && !surface.textureImages.empty())
-    {
-      return {coordinates, &surface.textureImages.front()};
-    }
-    return {};
-  }
 
   std::string ExtensionFor(const std::string& format)
   {
@@ -132,21 +72,20 @@ namespace
   void ReadMemFile(const fs::path& path, std::string& buffer)
   {
     buffer.clear();
-    std::FILE* file = std::fopen(path.c_str(), "rb");
-    if (file == nullptr)
+    const FilePtr file{std::fopen(path.c_str(), "rb"), &std::fclose};
+    if (!file)
     {
       return;
     }
-    std::fseek(file, 0, SEEK_END);
-    const long size = std::ftell(file);
-    std::rewind(file);
+    std::fseek(file.get(), 0, SEEK_END);
+    const long size = std::ftell(file.get());
+    std::rewind(file.get());
     if (size > 0)
     {
       buffer.resize(static_cast<std::size_t>(size));
-      const std::size_t read = std::fread(buffer.data(), 1, buffer.size(), file);
+      const std::size_t read = std::fread(buffer.data(), 1, buffer.size(), file.get());
       buffer.resize(read);
     }
-    std::fclose(file);
   }
 
   // True when `data` is a typed-array view directly onto the WebAssembly
@@ -161,29 +100,22 @@ namespace
   public:
     DCMParserWasm() = default;
 
-    /// Parses a DCM archive held in memory.
+    /// Parses a DCM file held in memory.
     ///
-    /// `data` accepts a Uint8Array (recommended: heap views and external
-    /// ArrayBuffers are both copied at native speed), or a plain JS array
-    /// of byte values.
+    /// `data` accepts a Uint8Array (recommended), any other ArrayBuffer view
+    /// (its raw bytes are used), a raw ArrayBuffer, or a plain JS array of
+    /// byte values. Anything else is treated as empty input. A file that
+    /// cannot be parsed does not throw: hasMesh() is false afterwards and the
+    /// library logs the reason to the console.
     void parseBytes(const em::val& data)
     {
+      // binding_ points into the surface data that is about to be replaced.
+      binding_ = {};
       parser_ = Open3SDCM::DCMParser{};
+      const RemoveInputOnExit removeInput;
       WriteInputToMemfs(data);
-      try
-      {
-        parser_.ParseDCM(kInputPath);
-      }
-      catch (...)
-      {
-        // Never leave the (possibly large) input pinned in MEMFS.
-        std::error_code ec;
-        fs::remove(kInputPath, ec);
-        throw;
-      }
-      std::error_code ec;
-      fs::remove(kInputPath, ec);
-      binding_ = FindTextureBinding(parser_.m_SurfaceData);
+      parser_.ParseDCM(kInputPath);
+      binding_ = Open3SDCM::FindTextureBinding(parser_.m_SurfaceData);
     }
 
     bool hasMesh() const { return !parser_.m_Vertices.empty() && !parser_.m_Triangles.empty(); }
@@ -212,27 +144,30 @@ namespace
       return color.has_value() ? static_cast<int>(color->PackedRGB()) : -1;
     }
 
-    /// Raw bytes of the embedded texture image (typically JPEG) that is
-    /// paired with the UV set returned by uv() (both are matched by
-    /// texture/coordinate IDs the same way the library's own OBJ exporter
-    /// does). Empty when the scan has none. View; call .slice() to keep.
+    /// Raw bytes of the embedded texture image (typically JPEG) that the
+    /// library's OBJ writer exports: image and uv() come from the same
+    /// Open3SDCM::FindTextureBinding() selection. Empty when the scan has
+    /// none. View; call .slice() to keep.
     em::val textureImage()
     {
-      readBuffer_.clear();
-      if (binding_.image != nullptr)
+      if (binding_.image == nullptr)
       {
-        readBuffer_.assign(binding_.image->imageBytes.begin(), binding_.image->imageBytes.end());
+        return em::val(em::typed_memory_view(0, static_cast<const std::uint8_t*>(nullptr)));
       }
-      return ByteView(readBuffer_);
+      const auto& bytes = binding_.image->imageBytes;
+      return em::val(em::typed_memory_view(bytes.size(), bytes.data()));
     }
 
-    /// Per-corner UV pairs (u0, v0, u1, v1, ...) of the texture's own
-    /// coordinate set; NaN marks a corner whose coordinate could not be
-    /// decoded. Empty when the scan has none. View; call .slice() to keep.
+    /// Per-corner UV pairs (u0, v0, u1, v1, ...) of the UV set paired with
+    /// textureImage(); NaN marks a corner whose coordinate could not be
+    /// decoded. Empty when the scan has none, or when the set does not have
+    /// exactly one entry per triangle corner (the OBJ writer then writes no
+    /// UVs either). View; call .slice() to keep.
     em::val uv()
     {
       uvBuffer_.clear();
-      if (binding_.coordinates != nullptr)
+      if (binding_.coordinates != nullptr &&
+          binding_.coordinates->cornerCoordinates.size() == parser_.m_Triangles.size() * 3)
       {
         uvBuffer_.reserve(binding_.coordinates->cornerCoordinates.size() * 2);
         for (const auto& corner : binding_.coordinates->cornerCoordinates)
@@ -247,16 +182,19 @@ namespace
     /// Writes the decoded mesh with the library's own writers into the
     /// virtual filesystem and returns the bytes of the main file.
     ///
-    /// STL/PLY produce a single file. For OBJ only the `.obj` bytes are
-    /// returned; the companion `.mtl` and texture image stay in the output
-    /// directory and can be fetched with readFile(). An empty view is
-    /// returned on failure or when the mesh is empty.
+    /// Each call first empties the output directory (/open3sdcm-output), so
+    /// it only ever holds the files of the latest export. STL/PLY produce a
+    /// single file. For OBJ only the `.obj` bytes are returned; the companion
+    /// `.mtl` and texture image are written next to it and can be fetched
+    /// with readFile(). An empty view is returned on failure or when the mesh
+    /// is empty.
     em::val exportMeshBytes(const std::string& format, const std::string& baseName)
     {
       readBuffer_.clear();
+      std::error_code ec;
+      fs::remove_all(kOutputDir, ec);
       if (hasMesh())
       {
-        std::error_code ec;
         fs::create_directories(kOutputDir, ec);
         const fs::path out = fs::path(kOutputDir) / (baseName + ExtensionFor(format));
         if (parser_.ExportMesh(out, format))
@@ -268,8 +206,9 @@ namespace
     }
 
     /// Lower-level variant of exportMeshBytes(): writes the mesh to any
-    /// path of the virtual filesystem (e.g. an IDBFS mount set up via the
-    /// Emscripten FS API). Returns the library's success flag.
+    /// path of the virtual filesystem (the directory must exist, e.g.
+    /// created with the FS runtime method). Returns the library's success
+    /// flag.
     bool exportMeshTo(const std::string& virtualPath, const std::string& format)
     {
       return parser_.ExportMesh(virtualPath, format);
@@ -291,66 +230,84 @@ namespace
                                         reinterpret_cast<const std::uint8_t*>(buffer.data())));
     }
 
+    // Writes the input to kInputPath (an empty file for empty or unsupported
+    // input, which the parser then reports as having no mesh).
+    //
+    // All inspection of the JS value happens before the file is opened: a JS
+    // exception (e.g. from a getter) bypasses C++ destructors, so it must not
+    // be able to fire while the FILE* is open.
     void WriteInputToMemfs(const em::val& data)
     {
-      // Accept both typed arrays and the raw ArrayBuffer behind them
-      // (fetch().arrayBuffer() etc.); everything downstream handles the
-      // typed-array form, so a bare ArrayBuffer is wrapped in one.
-      em::val bytes = data["length"].isUndefined() && !data["byteLength"].isUndefined()
-          ? em::val::global("Uint8Array").new_(data)
-          : data;
+      const em::val uint8Array = em::val::global("Uint8Array");
+      std::vector<std::uint8_t> staged;
+      em::val bytes = em::val::undefined();  // Uint8Array over the raw input bytes
+      bool onHeap = false;
 
-      const std::size_t size = bytes["length"].as<std::size_t>();
+      // (val::isTrue() is `=== true`, not truthiness, so test types instead.)
+      const auto isObject = [](const em::val& value)
+      { return !value.isNull() && value.typeOf().as<std::string>() == "object"; };
+      const auto isNumber = [](const em::val& value) { return value.typeOf().as<std::string>() == "number"; };
 
-      std::FILE* file = std::fopen(kInputPath, "wb");
-      if (file == nullptr || size == 0)
+      if (isObject(data) && isObject(data["buffer"]) && isNumber(data["byteOffset"]))
       {
-        if (file != nullptr)
-        {
-          std::fclose(file);
-        }
-        return;
+        // Any ArrayBuffer view (Uint8Array, other typed arrays, DataView):
+        // take its raw bytes, whatever the element type.
+        bytes = uint8Array.new_(data["buffer"], data["byteOffset"], data["byteLength"]);
+        onHeap = IsHeapView(data);
       }
-
-      const bool isTypedArray = !bytes["byteOffset"].isUndefined();
-      if (isTypedArray && IsHeapView(bytes))
+      else if (isObject(data) && isNumber(data["byteLength"]))
       {
-        // Heap view: the byteOffset is a WebAssembly address, copy directly.
-        // byteLength (not the element count) is the number of bytes to copy,
-        // so non-Uint8 heap views are handled correctly too.
-        const auto byteSize = bytes["byteLength"].as<std::size_t>();
-        const auto* src = reinterpret_cast<const std::uint8_t*>(bytes["byteOffset"].as<std::uint32_t>());
-        std::fwrite(src, 1, byteSize, file);
+        // Raw ArrayBuffer (fetch().arrayBuffer() etc.).
+        bytes = uint8Array.new_(data);
       }
-      else if (isTypedArray)
+      else if (isObject(data) && isNumber(data["length"]))
       {
-        // External ArrayBuffer: have JS copy it into the WebAssembly heap
-        // with Uint8Array.prototype.set (native-speed memcpy). HEAPU8 is
-        // fetched after malloc, which may have grown the heap.
-        const auto byteSize = bytes["byteLength"].as<std::size_t>();
-        void* const dst = std::malloc(byteSize);
-        em::val::module_property("HEAPU8")
-            .call<void>("set", bytes, static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(dst)));
-        std::fwrite(dst, 1, byteSize, file);
-        std::free(dst);
-      }
-      else
-      {
-        // Plain JS array: element-wise fallback.
-        std::vector<std::uint8_t> staged(size);
+        // Plain JS array of byte values: element-wise fallback.
+        const auto size = data["length"].as<std::size_t>();
+        staged.resize(size);
         for (std::size_t i = 0; i < size; ++i)
         {
-          staged[i] = bytes[i].as<std::uint8_t>();
+          staged[i] = data[i].as<std::uint8_t>();
         }
-        std::fwrite(staged.data(), 1, size, file);
       }
-      std::fclose(file);
+
+      const std::size_t byteSize = bytes.isUndefined() ? staged.size() : bytes["byteLength"].as<std::size_t>();
+      const std::uint8_t* src = staged.data();
+      std::unique_ptr<void, decltype(&std::free)> heapCopy{nullptr, &std::free};
+      if (!bytes.isUndefined() && byteSize > 0)
+      {
+        if (onHeap)
+        {
+          // Heap view: its byteOffset is a WebAssembly address.
+          src = reinterpret_cast<const std::uint8_t*>(bytes["byteOffset"].as<std::uint32_t>());
+        }
+        else
+        {
+          // External buffer: have JS copy it into the WebAssembly heap with
+          // Uint8Array.prototype.set (native-speed memcpy). HEAPU8 is fetched
+          // after malloc, which may have grown the heap.
+          heapCopy.reset(std::malloc(byteSize));
+          if (!heapCopy)
+          {
+            throw std::bad_alloc();
+          }
+          em::val::module_property("HEAPU8")
+              .call<void>("set", bytes, static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(heapCopy.get())));
+          src = static_cast<const std::uint8_t*>(heapCopy.get());
+        }
+      }
+
+      const FilePtr file{std::fopen(kInputPath, "wb"), &std::fclose};
+      if (file && byteSize > 0)
+      {
+        std::fwrite(src, 1, byteSize, file.get());
+      }
     }
 
     Open3SDCM::DCMParser parser_;
-    // Texture image + UV set paired by IDs (computed once per parse), so
-    // textureImage() and uv() always describe the same texture.
-    TextureBinding binding_;
+    // Texture image + UV set selected by the library (computed once per
+    // parse), so textureImage() and uv() always describe the same texture.
+    Open3SDCM::TextureBinding binding_;
     // Reused scratch buffers so the returned views stay valid until the next
     // call on this parser.
     std::string readBuffer_;
