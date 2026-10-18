@@ -10,6 +10,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# No job pushes, comments or publishes: a read-only token is enough.
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build / ${{ matrix.name }}
@@ -215,62 +219,45 @@ jobs:
       VCPKG_FORCE_SYSTEM_BINARIES: '1'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           submodules: true
 
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: false
-          swap-storage: true
-
-      - name: Install Ninja
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build
-
-      # Same cache key as pages.yml / release.yml, so a warm cache is shared
-      # between CI, the Pages deploy and the release build.
-      - name: Cache vcpkg
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ github.workspace }}/.vcpkg-binary-cache
-            ~/vcpkg
-          key: vcpkg-wasm-${{ hashFiles('vcpkg.json', 'cmake/emscripten/**', 'ports/poco/**') }}
-
-      # Pinned (rather than 'latest') so CI tests the same emscripten the
-      # Pages deploy and the release artifact are built with.
-      - name: Install Emscripten SDK
-        run: |
-          set -euo pipefail
-          git clone --depth 1 https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
-          "$RUNNER_TEMP/emsdk/emsdk" install 6.0.10
-          "$RUNNER_TEMP/emsdk/emsdk" activate 6.0.10
-          echo "EMSDK=$RUNNER_TEMP/emsdk" >> "$GITHUB_ENV"
-          echo "$RUNNER_TEMP/emsdk/upstream/emscripten" >> "$GITHUB_PATH"
+      # Same toolchain (and warm vcpkg cache) as the Pages deploy and the
+      # release build.
+      - name: Set up the WASM toolchain
+        uses: ./.github/actions/setup-wasm
 
       - name: Configure WASM build
-        env:
-          VCPKG_BINARY_CACHES: ${{ github.workspace }}/.vcpkg-binary-cache
         run: cmake --preset wasm-release
 
       - name: Build WASM module
-        env:
-          VCPKG_BINARY_CACHES: ${{ github.workspace }}/.vcpkg-binary-cache
         run: cmake --build --preset wasm-release --parallel
 
-      - name: Smoke-test the WASM module (Node)
-        env:
-          VCPKG_BINARY_CACHES: ${{ github.workspace }}/.vcpkg-binary-cache
+      # Every scan with exact expectations in Wasm/test/fixtures.json,
+      # including the three textured ones (012, 019, 045).
+      - name: Test the module API used by the web demo
         run: |
           node Wasm/test/web-demo-test.mjs \
             TestData/Handle/HandleAngledLarge.dcm \
             "TestData/Hole3x5/Hole 3x5.dcm" \
-            TestData/real-world/scan_040.dcm
+            TestData/real-world/scan_012.dcm \
+            TestData/real-world/scan_019.dcm \
+            TestData/real-world/scan_039.dcm \
+            TestData/real-world/scan_040.dcm \
+            TestData/real-world/scan_045.dcm
+
+      - name: Cross-check STL output against reference meshes
+        run: |
+          node Wasm/test/smoke-test.mjs \
+            TestData/Handle/HandleAngledLarge.dcm \
+            TestData/Handle/dcm2stlapp_HandleAngledLarge.stl
+          node Wasm/test/smoke-test.mjs \
+            "TestData/Hole3x5/Hole 3x5.dcm" \
+            "TestData/Hole3x5/dcm2stlapp_Hole 3x5.stl"
+
+      - name: Test parser edge cases and input types
+        run: |
+          node Wasm/test/api-test.mjs \
+            TestData/real-world/scan_012.dcm \
+            "TestData/Hole3x5/Hole 3x5.dcm"
