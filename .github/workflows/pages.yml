@@ -87,11 +87,17 @@ jobs:
             TestData/real-world/scan_012.dcm \
             "TestData/Hole3x5/Hole 3x5.dcm"
 
+      # One artifact name per attempt: re-running a failed deploy uploads a
+      # second artifact in the same workflow run, and deploy-pages refuses to
+      # pick between two artifacts with the same name.
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
+          name: github-pages-attempt-${{ github.run_attempt }}
           path: site
 
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+        with:
+          artifact_name: github-pages-attempt-${{ github.run_attempt }}
