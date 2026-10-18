@@ -252,8 +252,8 @@ cmake --preset wasm-release
 cmake --build builds/wasm-release -j
 
 # Artifacts: builds/wasm-release/bin/open3sdcm.{js,wasm}
-# Smoke test against the desktop parser (optional):
-node Wasm/test/smoke-test.mjs TestData/real-world/scan_012.dcm
+# Check the STL output against a committed reference mesh (more tests in Wasm/README.md):
+node Wasm/test/smoke-test.mjs TestData/Handle/HandleAngledLarge.dcm TestData/Handle/dcm2stlapp_HandleAngledLarge.stl
 ```
 
 Every release also ships the WASM module as
@@ -269,12 +269,15 @@ as STL, PLY or OBJ - all client-side. It is deployed to GitHub Pages by
 the WASM module and publishes it together with the page. One-time repository
 setup: Settings → Pages → Build and deployment → Source → **GitHub Actions**.
 
-To run the same page locally against your own build:
+To run the same page locally against your own build, assemble the site the
+way `pages.yml` does (the whole `web/` tree, including the vendored three.js
+under `web/vendor/`, plus the module) and serve it:
 
 ```bash
 cmake --preset wasm-release && cmake --build --preset wasm-release
-cd builds/wasm-release/bin && python3 -m http.server 8000
-# open http://localhost:8000 after copying web/index.html, web/app.js and web/style.css here
+mkdir -p builds/wasm-site && cp -r web/. builds/wasm-site/
+cp builds/wasm-release/bin/open3sdcm.js builds/wasm-release/bin/open3sdcm.wasm builds/wasm-site/
+cd builds/wasm-site && python3 -m http.server 8000   # then open http://localhost:8000
 ```
 
 ---

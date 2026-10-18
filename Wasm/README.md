@@ -33,15 +33,34 @@ Artifacts land in `builds/wasm-release/bin/`:
 |--------------------|------------------------------------------------|
 | `open3sdcm.js`     | ES6 module loader (default export = factory)   |
 | `open3sdcm.wasm`   | compiled library + bindings                    |
-| `types/open3sdcm.d.ts` | TypeScript declarations for the module      |
+
+The TypeScript declarations live in the source tree,
+[`types/open3sdcm.d.ts`](types/open3sdcm.d.ts); release archives ship them
+next to the module.
+
+## Tests
 
 The module is built for `web`, `worker` and `node` environments, so the same
-artifacts can be smoke-tested under Node. To verify a build against the
-desktop parser (all vertex coordinates must come out bit-identical):
+artifacts are tested under Node (CI runs all three on every pull request):
 
 ```bash
-node Wasm/test/smoke-test.mjs TestData/real-world/scan_012.dcm
+# Module API used by the web demo; scans listed in test/fixtures.json are
+# also checked against exact expected counts, colours and texture sizes.
+node Wasm/test/web-demo-test.mjs TestData/real-world/scan_012.dcm "TestData/Hole3x5/Hole 3x5.dcm"
+
+# Edge cases: malformed input, every input type, parser reuse, exports, delete().
+node Wasm/test/api-test.mjs TestData/real-world/scan_012.dcm "TestData/Hole3x5/Hole 3x5.dcm"
+
+# STL output against a reference: vertex coordinates must be bit-identical.
+# Either a reference .stl (the committed dcm2stlapp_*.stl files work) ...
+node Wasm/test/smoke-test.mjs TestData/Handle/HandleAngledLarge.dcm TestData/Handle/dcm2stlapp_HandleAngledLarge.stl
+# ... or the desktop CLI (default builds/ninja-release-vcpkg/bin/Open3SDCMCLI).
+node Wasm/test/smoke-test.mjs TestData/real-world/scan_012.dcm path/to/Open3SDCMCLI
 ```
+
+`smoke-test.mjs` fails when it has nothing to compare against (pass
+`--allow-skip` to only run the WASM side). Set `OPEN3SDCM_WASM_JS` to test a
+module other than `builds/wasm-release/bin/open3sdcm.js`.
 
 ## Usage (JavaScript / TypeScript)
 
@@ -62,25 +81,39 @@ if (parser.hasMesh()) {
   // Or export with the library's own writers
   const stl = parser.exportMeshBytes("stl", "mesh").slice(); // Uint8Array
 }
+
+parser.delete(); // parsers are C++ objects: free them when done
 ```
 
 Data model:
 
+- `parseBytes(data)`: a `Uint8Array` (or any `ArrayBuffer` view, an
+  `ArrayBuffer`, or a plain array of bytes). It does not throw for an
+  unreadable file: `hasMesh()` is then `false` and the library logs the
+  reason to the console.
 - `vertices()`: flat `(N, 3)` `Float32Array`; `vertexCount() = N`.
 - `triangles()`: flat `(M, 3)` `Uint32Array` of 0-based indices; `triangleCount() = M`.
-- `uv()`: per-corner UV pairs, `NaN` where a corner was not decoded (empty when absent).
-- `textureImage()`: raw bytes of the first embedded texture (typically JPEG).
+- `textureImage()`: raw bytes of the embedded texture (typically JPEG) that
+  the library's OBJ writer exports, paired with `uv()` by texture/coordinate
+  IDs (on multi-texture scans not necessarily the first image).
+- `uv()`: per-corner UV pairs, `NaN` where a corner was not decoded (empty
+  when absent). Values normally lie in `[0, 1]`; the format can encode
+  `[-256, 256)`.
 - `exportMeshBytes(format, baseName)`: `format` is `"stl"` (alias `"stlb"`),
-  `"ply"` or `"obj"`. For `"obj"` only the `.obj` bytes are returned; the
-  companion `.mtl`/texture are written next to it in the virtual filesystem
-  and can be fetched with `readFile("/open3sdcm-output/<baseName>.mtl")`.
+  `"ply"` or `"obj"`. Each call first empties `/open3sdcm-output`, so the
+  directory only holds the latest export. For `"obj"` only the `.obj` bytes
+  are returned; the companion `.mtl`/texture are written next to it and can
+  be fetched with `readFile("/open3sdcm-output/<baseName>.mtl")`.
 - `exportMeshTo(path, format)` / `readFile(path)`: lower-level access to the
-  Emscripten virtual filesystem (e.g. for IDBFS mounts via the `FS` runtime
-  method).
+  Emscripten virtual filesystem (the module also exports `FS`).
+- `delete()`: frees the parser. Without it, its decoded mesh stays on the
+  WebAssembly heap.
 
-All buffer-returning methods are zero-copy views into WebAssembly memory.
-A view is valid only until the next call on the same parser: call `.slice()`
-on it synchronously if you need to keep the data.
+Buffer-returning methods return views into WebAssembly memory
+(`vertices()`, `triangles()` and `textureImage()` without copying). A view
+is valid only until the next call into the module: any allocation, on this
+parser or another one, may grow the memory and detach every outstanding
+view. Call `.slice()` on it synchronously if you need to keep the data.
 
 ## How it works
 
