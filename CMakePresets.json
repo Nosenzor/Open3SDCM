@@ -98,7 +98,7 @@
         "CMAKE_BUILD_TYPE": "Release",
         "VCPKG_TARGET_TRIPLET": "wasm32-emscripten",
         "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/emscripten",
-        "VCPKG_OVERLAY_PORTS": "${sourceDir}/ports",
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/emscripten/ports",
         "VCPKG_CHAINLOAD_TOOLCHAIN_FILE": "${sourceDir}/cmake/emscripten/emscripten-toolchain.cmake",
         "Open3SDCM_BUILD_TESTS": {
           "type": "BOOL",
