@@ -1,0 +1,51 @@
+{
+  "TestData/Handle/HandleAngledLarge.dcm": {
+    "vertexCount": 3776,
+    "triangleCount": 7548,
+    "baseColor": "0x80656c",
+    "textureBytes": 0,
+    "uv": false
+  },
+  "TestData/Hole3x5/Hole 3x5.dcm": {
+    "vertexCount": 376,
+    "triangleCount": 748,
+    "baseColor": "0x808080",
+    "textureBytes": 0,
+    "uv": false
+  },
+  "TestData/real-world/scan_040.dcm": {
+    "vertexCount": 50648,
+    "triangleCount": 101292,
+    "baseColor": "0x808080",
+    "textureBytes": 0,
+    "uv": false
+  },
+  "TestData/real-world/scan_012.dcm": {
+    "vertexCount": 60117,
+    "triangleCount": 120230,
+    "baseColor": "0x808080",
+    "textureBytes": 1550459,
+    "uv": true
+  },
+  "TestData/real-world/scan_019.dcm": {
+    "vertexCount": 95497,
+    "triangleCount": 190206,
+    "baseColor": "0x808080",
+    "textureBytes": 2107227,
+    "uv": true
+  },
+  "TestData/real-world/scan_039.dcm": {
+    "vertexCount": 68698,
+    "triangleCount": 136995,
+    "baseColor": "0x808080",
+    "textureBytes": 0,
+    "uv": false
+  },
+  "TestData/real-world/scan_045.dcm": {
+    "vertexCount": 99619,
+    "triangleCount": 198513,
+    "baseColor": "0x808080",
+    "textureBytes": 2313037,
+    "uv": true
+  }
+}
