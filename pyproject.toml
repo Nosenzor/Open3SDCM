@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "open3sdcm"
-version = "1.1.4"
+version = "1.1.5"
 description = "Read 3Shape DCM dental scan files into numpy arrays"
 readme = "README.md"
 requires-python = ">=3.9"

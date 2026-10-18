@@ -154,9 +154,64 @@ jobs:
           path: ${{ steps.package.outputs.archive }}
           if-no-files-found: error
 
+  build-wasm:
+    name: Build / WebAssembly
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      VCPKG_FORCE_SYSTEM_BINARIES: '1'
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 1
+          submodules: true
+
+      - name: Set up the WASM toolchain
+        uses: ./.github/actions/setup-wasm
+
+      - name: Configure WASM build
+        run: cmake --preset wasm-release
+
+      - name: Build WASM module
+        run: cmake --build --preset wasm-release --parallel
+
+      - name: Test the WASM module before packaging
+        run: |
+          node Wasm/test/web-demo-test.mjs TestData/real-world/scan_012.dcm "TestData/Hole3x5/Hole 3x5.dcm"
+          node Wasm/test/api-test.mjs TestData/real-world/scan_012.dcm "TestData/Hole3x5/Hole 3x5.dcm"
+          node Wasm/test/smoke-test.mjs TestData/Handle/HandleAngledLarge.dcm \
+            TestData/Handle/dcm2stlapp_HandleAngledLarge.stl
+
+      - name: Package WASM release asset
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          archive="Open3SDCM-${{ needs.prepare.outputs.version }}-wasm.tar.gz"
+          mkdir -p release
+          cp builds/wasm-release/bin/open3sdcm.js release/
+          cp builds/wasm-release/bin/open3sdcm.wasm release/
+          cp Wasm/types/open3sdcm.d.ts release/
+
+          pushd release >/dev/null
+          cmake -E tar cfvz "../${archive}" --format=gnutar -- open3sdcm.js open3sdcm.wasm open3sdcm.d.ts
+          popd >/dev/null
+
+          echo "archive=${archive}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-wasm
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+
   publish:
     name: Publish release
-    needs: [prepare, build]
+    needs: [prepare, build, build-wasm]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -178,6 +233,12 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: release-windows
+          path: dist
+
+      - name: Download WASM artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-wasm
           path: dist
 
       - name: Publish GitHub release

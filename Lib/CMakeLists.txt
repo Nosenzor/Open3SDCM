@@ -34,6 +34,14 @@ add_library(Open3SDCM::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
 set_property(TARGET ${PROJECT_NAME} PROPERTY POSITION_INDEPENDENT_CODE ON)
 
+# Emscripten disables exception catching by default, which would strip the
+# try/catch blocks around the Poco calls and turn any malformed DCM into a
+# WebAssembly abort instead of a graceful parse failure. The Wasm/ bindings
+# enable the same flag for the final link.
+if(EMSCRIPTEN)
+  target_compile_options(${PROJECT_NAME} PRIVATE "-fexceptions")
+endif()
+
 target_include_directories(${PROJECT_NAME}
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>

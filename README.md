@@ -12,6 +12,7 @@ An open-source C++20 library and CLI tool for converting 3Shape DCM files to sta
 | ✅ | **Convert to STL, PLY, OBJ** | Native writers, no external mesh library | v0.1.0 |
 | ✅ | **Read mesh colors** | Per-vertex color data extraction | v1.1.0 |
 | ✅ | **Read UV mapping and textures** | Texture coordinate and mapping support | v1.1.0 |
+| ✅ | **WebAssembly build** | Run the parser in the browser; deployed as an interactive [GitHub Pages demo](https://nosenzor.github.io/Open3SDCM/) | v1.1.5 |
 | 🚧 | **Read extra curves** | Spline and annotation data | Planned |
 
 ### Not in Scope
@@ -238,6 +239,45 @@ cmake --build builds/ninja-release-vcpkg-tests -j
 
 # Run tests
 ctest --preset ninja-release-vcpkg-tests --output-on-failure
+```
+
+#### WebAssembly (Emscripten)
+
+The library cross-compiles to WebAssembly with an embind/TypeScript interface
+(see [`Wasm/`](Wasm/README.md) for build details and usage):
+
+```bash
+source <your-emsdk>/emsdk_env.sh   # emcc on PATH, EMSDK set
+cmake --preset wasm-release
+cmake --build builds/wasm-release -j
+
+# Artifacts: builds/wasm-release/bin/open3sdcm.{js,wasm}
+# Check the STL output against a committed reference mesh (more tests in Wasm/README.md):
+node Wasm/test/smoke-test.mjs TestData/Handle/HandleAngledLarge.dcm TestData/Handle/dcm2stlapp_HandleAngledLarge.stl
+```
+
+Every release also ships the WASM module as
+`Open3SDCM-<version>-wasm.tar.gz` (open3sdcm.js, open3sdcm.wasm and the
+TypeScript declarations), alongside the desktop CLI archives.
+
+#### Web demo (GitHub Pages)
+
+[`web/`](web/) contains a static demo page: drop a DCM scan, see the mesh in
+a three.js viewer (with embedded textures/colours where present) and save it
+as STL, PLY or OBJ - all client-side. It is deployed to GitHub Pages by
+[`.github/workflows/pages.yml`](.github/workflows/pages.yml), which builds
+the WASM module and publishes it together with the page. One-time repository
+setup: Settings → Pages → Build and deployment → Source → **GitHub Actions**.
+
+To run the same page locally against your own build, assemble the site the
+way `pages.yml` does (the whole `web/` tree, including the vendored three.js
+under `web/vendor/`, plus the module) and serve it:
+
+```bash
+cmake --preset wasm-release && cmake --build --preset wasm-release
+mkdir -p builds/wasm-site && cp -r web/. builds/wasm-site/
+cp builds/wasm-release/bin/open3sdcm.js builds/wasm-release/bin/open3sdcm.wasm builds/wasm-site/
+cd builds/wasm-site && python3 -m http.server 8000   # then open http://localhost:8000
 ```
 
 ---

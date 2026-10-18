@@ -1070,44 +1070,6 @@ namespace Open3SDCM
       return nullptr;
     }
 
-    struct ExportTextureBinding
-    {
-      const Open3SDCM::TextureCoordinateData* coordinates{nullptr};
-      const Open3SDCM::EmbeddedTextureImage* image{nullptr};
-    };
-
-    ExportTextureBinding FindTextureBinding(const Open3SDCM::SurfaceData& surfaceData)
-    {
-      for (const auto& textureImage : surfaceData.textureImages)
-      {
-        if (textureImage.imageBytes.empty())
-        {
-          continue;
-        }
-
-        const auto* coordinates = FindTextureCoordinateDataById(surfaceData,
-                                                                textureImage.refTextureCoordId,
-                                                                textureImage.textureId);
-        if (coordinates != nullptr)
-        {
-          return {coordinates, &textureImage};
-        }
-      }
-
-      const auto* coordinates = FindTextureCoordinateDataById(surfaceData, std::nullopt, std::nullopt);
-      if (coordinates != nullptr)
-      {
-        return {coordinates, surfaceData.textureImages.empty() ? nullptr : &surfaceData.textureImages.front()};
-      }
-
-      if (!surfaceData.textureImages.empty())
-      {
-        return {nullptr, &surfaceData.textureImages.front()};
-      }
-
-      return {};
-    }
-
     std::string GuessTextureExtension(const Open3SDCM::EmbeddedTextureImage& textureImage)
     {
       if (textureImage.mimeType.has_value())
@@ -1309,7 +1271,7 @@ namespace Open3SDCM
         return false;
       }
 
-      const ExportTextureBinding textureBinding = FindTextureBinding(surfaceData);
+      const Open3SDCM::TextureBinding textureBinding = Open3SDCM::FindTextureBinding(surfaceData);
       const bool hasTextureCoordinates = textureBinding.coordinates != nullptr &&
         textureBinding.coordinates->cornerCoordinates.size() == triangles.size() * 3;
       const bool hasTextureImage = textureBinding.image != nullptr && !textureBinding.image->imageBytes.empty();
@@ -1417,6 +1379,38 @@ namespace Open3SDCM
     }
 
   }// namespace detail
+
+  TextureBinding FindTextureBinding(const SurfaceData& surfaceData)
+  {
+    for (const auto& textureImage : surfaceData.textureImages)
+    {
+      if (textureImage.imageBytes.empty())
+      {
+        continue;
+      }
+
+      const auto* coordinates = detail::FindTextureCoordinateDataById(surfaceData,
+                                                                      textureImage.refTextureCoordId,
+                                                                      textureImage.textureId);
+      if (coordinates != nullptr)
+      {
+        return {coordinates, &textureImage};
+      }
+    }
+
+    const auto* coordinates = detail::FindTextureCoordinateDataById(surfaceData, std::nullopt, std::nullopt);
+    if (coordinates != nullptr)
+    {
+      return {coordinates, surfaceData.textureImages.empty() ? nullptr : &surfaceData.textureImages.front()};
+    }
+
+    if (!surfaceData.textureImages.empty())
+    {
+      return {nullptr, &surfaceData.textureImages.front()};
+    }
+
+    return {};
+  }
 
   void DCMParser::ParseDCM(const fs::path& filePath)
   {

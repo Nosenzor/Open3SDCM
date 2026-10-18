@@ -1,0 +1,66 @@
+name: Set up the Emscripten + vcpkg WASM toolchain
+description: >-
+  Installs Ninja and a pinned Emscripten SDK, and restores/saves the vcpkg
+  binary cache used by the wasm-release CMake preset. The caller must check
+  out the repository first (the cache key hashes vcpkg.json and
+  cmake/emscripten/**). Only supports Linux runners.
+
+inputs:
+  emsdk-version:
+    description: Emscripten SDK version to install and activate.
+    default: '6.0.10'
+  emsdk-commit:
+    description: >-
+      emsdk repository commit to use. Must be the emsdk release commit that
+      matches emsdk-version (the default is the "Release 6.0.10" commit).
+    default: 'a2b92777574c2feda07994cd4f1079a3dfc151f8'
+
+runs:
+  using: composite
+  steps:
+    - name: Install Ninja
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y ninja-build
+
+    # Pinned to a commit and version (rather than emsdk HEAD / 'latest') so CI,
+    # the Pages deploy and the release artifact are all built with the same
+    # emscripten.
+    - name: Install Emscripten SDK
+      shell: bash
+      env:
+        EMSDK_VERSION: ${{ inputs.emsdk-version }}
+        EMSDK_COMMIT: ${{ inputs.emsdk-commit }}
+      run: |
+        set -euo pipefail
+        git clone --no-checkout https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+        git -C "$RUNNER_TEMP/emsdk" fetch --depth 1 origin "$EMSDK_COMMIT"
+        git -C "$RUNNER_TEMP/emsdk" checkout --detach "$EMSDK_COMMIT"
+        "$RUNNER_TEMP/emsdk/emsdk" install "$EMSDK_VERSION"
+        "$RUNNER_TEMP/emsdk/emsdk" activate "$EMSDK_VERSION"
+        echo "EMSDK=$RUNNER_TEMP/emsdk" >> "$GITHUB_ENV"
+        echo "$RUNNER_TEMP/emsdk/upstream/emscripten" >> "$GITHUB_PATH"
+
+    # vcpkg only reads VCPKG_BINARY_SOURCES / VCPKG_DEFAULT_BINARY_CACHE (the
+    # directory must already exist); any other variable name is silently
+    # ignored and every run rebuilds all ports from source.
+    - name: Prepare vcpkg binary cache
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$GITHUB_WORKSPACE/.vcpkg-binary-cache"
+        echo "VCPKG_DEFAULT_BINARY_CACHE=$GITHUB_WORKSPACE/.vcpkg-binary-cache" >> "$GITHUB_ENV"
+
+    # Only the archive directory is cached (not a vcpkg checkout). The run id
+    # in the key makes every successful run save its own entry, while
+    # restore-keys picks the newest entry for the same inputs, so packages
+    # built by a previous run are reused and new ones get saved.
+    - name: Cache vcpkg binary packages
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ${{ github.workspace }}/.vcpkg-binary-cache
+        key: vcpkg-wasm-${{ runner.os }}-emsdk${{ inputs.emsdk-version }}-${{ hashFiles('vcpkg.json', 'cmake/emscripten/**') }}-${{ github.run_id }}
+        restore-keys: |
+          vcpkg-wasm-${{ runner.os }}-emsdk${{ inputs.emsdk-version }}-${{ hashFiles('vcpkg.json', 'cmake/emscripten/**') }}-

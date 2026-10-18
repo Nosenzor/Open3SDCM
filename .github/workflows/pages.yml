@@ -1,0 +1,97 @@
+name: Pages (WASM demo)
+
+# Builds the Open3SDCM WebAssembly module and deploys the static demo page
+# (web/) to GitHub Pages. The deployed site is fully self-contained:
+# index.html + app.js + the freshly built open3sdcm.{js,wasm} - no backend,
+# uploads stay in the visitor's browser.
+#
+# Pull requests are validated by the 'wasm' job in ci.yml; this workflow only
+# deploys from main.
+#
+# One-time repository setup: Settings -> Pages -> Build and deployment ->
+# Source must be set to "GitHub Actions".
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'Wasm/**'
+      - 'Lib/src/**'
+      - 'Lib/CMakeLists.txt'
+      - 'cmake/emscripten/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'vcpkg.json'
+      - '.github/actions/setup-wasm/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Queue deploys instead of cancelling them: GitHub's Pages guidance is to
+# never cancel an in-progress production deployment.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build WASM demo and deploy
+    # A manual dispatch from another branch must not publish the site.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      VCPKG_FORCE_SYSTEM_BINARIES: '1'
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 1
+          submodules: true
+
+      - name: Set up the WASM toolchain
+        uses: ./.github/actions/setup-wasm
+
+      - name: Configure WASM build
+        run: cmake --preset wasm-release
+
+      - name: Build WASM module
+        run: cmake --build --preset wasm-release --parallel
+
+      - name: Assemble site
+        run: |
+          set -euo pipefail
+          mkdir -p site
+          cp -r web/. site/
+          cp builds/wasm-release/bin/open3sdcm.js site/
+          cp builds/wasm-release/bin/open3sdcm.wasm site/
+          ls -lah site
+
+      # Test the exact module that is about to be published.
+      - name: Test the assembled site's module
+        env:
+          OPEN3SDCM_WASM_JS: site/open3sdcm.js
+        run: |
+          node Wasm/test/web-demo-test.mjs \
+            TestData/real-world/scan_012.dcm \
+            "TestData/Hole3x5/Hole 3x5.dcm"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

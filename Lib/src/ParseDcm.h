@@ -75,4 +75,39 @@ namespace Open3SDCM
     void ParseBinaryData(Poco::AutoPtr<Poco::XML::NodeList> BinaryNodes, const std::string& schema, const std::map<std::string, std::string>& properties);
 
   }; // class DCMParser
+
+  /// Texture image and UV set that belong together (pointers into a
+  /// `SurfaceData`; valid only while that `SurfaceData` lives and is unchanged).
+  struct TextureBinding
+  {
+    /// UV set to sample the image with, or null when no UV set was decoded.
+    const TextureCoordinateData* coordinates{nullptr};
+    /// Embedded image, or null when the scan has none. May point at an image
+    /// whose `imageBytes` is empty; check before using it.
+    const EmbeddedTextureImage* image{nullptr};
+  };
+
+  /// Selects the embedded texture image and the UV set that go together.
+  ///
+  /// This is the selection the OBJ writer uses, so callers that surface the
+  /// texture elsewhere (e.g. the WebAssembly bindings) stay consistent with it.
+  /// The rules, in order:
+  ///  1. Each image with non-empty `imageBytes` is tried in file order. Its UV
+  ///     set is the first one with decoded coordinates whose `textureCoordId`
+  ///     equals the image's `refTextureCoordId`; failing that, the first one
+  ///     whose `textureId` equals the image's `textureId`; failing that, the
+  ///     first UV set with decoded coordinates. The first image that gets a UV
+  ///     set wins, so any decoded UV set makes the first non-empty image
+  ///     eligible, and a later image only wins when an earlier one is empty.
+  ///  2. Otherwise, if some UV set has decoded coordinates (no image has
+  ///     usable bytes), the first decoded UV set is returned together with the
+  ///     first image of `textureImages` (null when there is none).
+  ///  3. Otherwise, if `textureImages` is not empty, `coordinates` is null and
+  ///     `image` is the first image of `textureImages` (its bytes may be empty).
+  ///  4. Otherwise both members are null.
+  ///
+  /// @param surfaceData Surface data of a parsed mesh (`DCMParser::m_SurfaceData`).
+  /// @return The selected pair; the pointers stay valid while @p surfaceData
+  ///         is alive and not modified (e.g. by another `ParseDCM()` call).
+  [[nodiscard]] TextureBinding FindTextureBinding(const SurfaceData& surfaceData);
 }// namespace Open3SDCM
