@@ -26,8 +26,10 @@
 
   <main>
     <section id="controls">
+      <!-- Visually hidden rather than `hidden`: the input must stay focusable
+           so keyboard users can open the picker (the label is not). -->
+      <input id="file-input" class="visually-hidden" type="file" accept=".dcm">
       <label id="file-button" class="button" for="file-input">Choose .dcm file</label>
-      <input id="file-input" type="file" accept=".dcm" hidden>
       <span id="status" role="status" aria-live="polite">Loading WebAssembly module…</span>
 
       <div id="export" aria-hidden="true">
@@ -48,6 +50,10 @@
     </footer>
   </main>
 
-  <script type="module" src="app.js"></script>
+  <!-- onerror fires when app.js or one of its static imports (the vendored
+       three.js) cannot be fetched; without it the page would stay on
+       "Loading…" with no explanation. -->
+  <script type="module" src="app.js"
+          onerror="const s = document.getElementById('status'); s.textContent = 'Failed to load the viewer scripts (app.js or vendor/three).'; s.classList.add('error');"></script>
 </body>
 </html>

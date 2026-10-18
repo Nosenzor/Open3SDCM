@@ -101,6 +101,25 @@ main {
   background: #6db4ff;
 }
 
+/* The file input stays in the tab order (display:none would remove it);
+   its styled label shows the keyboard focus instead. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+#file-input:focus-visible + #file-button {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 #export {
   display: flex;
   gap: 0.5rem;

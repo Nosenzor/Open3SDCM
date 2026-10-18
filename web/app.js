@@ -15,8 +15,9 @@
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import createOpen3SDCM from "./open3sdcm.js";
 
+// The bindings' export directory: each exportMeshBytes() call empties it
+// first, so after an export it holds exactly that export's files.
 const OUTPUT_DIR = "/open3sdcm-output";
 
 const els = {
@@ -47,7 +48,15 @@ scene.background = new THREE.Color(0x181c22);
 const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 5000);
 camera.position.set(60, 40, 80);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+} catch (err) {
+  // Without WebGL there is no viewer: say so instead of leaving the page on
+  // "Loading…", and stop here.
+  setStatus(`This browser could not create a WebGL context, which the 3D viewer needs (${err?.message ?? err}).`, true);
+  throw err;
+}
 renderer.setPixelRatio(window.devicePixelRatio);
 els.viewer.appendChild(renderer.domElement);
 
@@ -79,7 +88,11 @@ renderer.setAnimationLoop(() => {
 // ---------------------------------------------------------------------------
 
 setStatus("Loading WebAssembly module…");
-createOpen3SDCM()
+// Imported dynamically (not with a static import) so that a missing
+// open3sdcm.js ends up in the .catch below instead of silently stopping the
+// whole script.
+import("./open3sdcm.js")
+    .then(({ default: createOpen3SDCM }) => createOpen3SDCM())
     .then((mod) => {
       Open3SDCM = mod;
       setStatus("Ready — drop a .dcm scan to view it.");
@@ -99,6 +112,9 @@ function setStatus(text, isError = false) {
 function clearMesh() {
   if (sceneMesh) {
     sceneMesh.geometry.dispose();
+    // dispose() frees the GPU copy; the decoded ImageBitmap has to be closed
+    // separately or it stays in memory until garbage collection.
+    sceneMesh.material.map?.image?.close?.();
     sceneMesh.material.map?.dispose();
     sceneMesh.material.dispose();
     scene.remove(sceneMesh);
@@ -115,14 +131,6 @@ async function loadDcmFile(file) {
   // parser and its whole decoded mesh would stay pinned on the wasm heap.
   parser?.delete();
   parser = null;
-
-  // Drop files from a previous scan (e.g. its OBJ texture) so the OBJ
-  // export below cannot pick them up as companions of this scan.
-  if (Open3SDCM.FS.analyzePath(OUTPUT_DIR).exists) {
-    for (const stale of Open3SDCM.FS.readdir(OUTPUT_DIR)) {
-      if (stale !== "." && stale !== "..") Open3SDCM.FS.unlink(`${OUTPUT_DIR}/${stale}`);
-    }
-  }
 
   setExportEnabled(false);
   els.viewer.setAttribute("data-empty", "true");
@@ -141,12 +149,13 @@ async function loadDcmFile(file) {
       return;
     }
 
-    await buildMesh();
+    const { textured, textureError } = await buildMesh();
     currentName = file.name.replace(/\.dcm$/i, "");
     const info =
         `${currentName}: ${parser.vertexCount().toLocaleString()} vertices, ` +
         `${parser.triangleCount().toLocaleString()} triangles` +
-        (parser.textureImage().length ? ", textured" : "");
+        (textured ? ", textured" : "") +
+        (textureError ? ` (the embedded texture could not be decoded: ${textureError?.message ?? textureError})` : "");
     setStatus(info);
     setExportEnabled(true);
   } catch (err) {
@@ -207,21 +216,28 @@ async function buildMesh() {
   const packed = parser.baseColor();
 
   const textureBytes = parser.textureImage().slice();
+  let textureError = null;
   if (textureBytes.length && hasUvs) {
     // The library embeds the image bytes as-is, typically JPEG (the
     // format also allows PNG); sniff the magic bytes for the blob type.
     const isPng = textureBytes[0] === 0x89 && textureBytes[1] === 0x50;
-    // The DCM's UVs use a top-left image origin; app.js converts them to
-    // three.js's bottom-left convention, so the image itself must be flipped
-    // to match - and for ImageBitmap textures three.js ignores Texture.flipY,
-    // the flip has to be baked in here.
-    const bitmap = await createImageBitmap(
-        new Blob([textureBytes], { type: isPng ? "image/png" : "image/jpeg" }),
-        { imageOrientation: "flipY" });
-    const texture = new THREE.Texture(bitmap);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.needsUpdate = true;
-    material.map = texture;
+    try {
+      // The DCM's UVs use a top-left image origin; app.js converts them to
+      // three.js's bottom-left convention, so the image itself must be
+      // flipped to match - and for ImageBitmap textures three.js ignores
+      // Texture.flipY, the flip has to be baked in here.
+      const bitmap = await createImageBitmap(
+          new Blob([textureBytes], { type: isPng ? "image/png" : "image/jpeg" }),
+          { imageOrientation: "flipY" });
+      const texture = new THREE.Texture(bitmap);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.needsUpdate = true;
+      material.map = texture;
+    } catch (err) {
+      // An undecodable image must not cost the user the (valid) mesh: show
+      // it untextured instead.
+      textureError = err;
+    }
   }
 
   if (!material.map && packed >= 0) {
@@ -235,6 +251,7 @@ async function buildMesh() {
   els.viewer.removeAttribute("data-empty");
 
   fitCamera(geometry);
+  return { textured: Boolean(material.map), textureError };
 }
 
 function fitCamera(geometry) {
@@ -279,30 +296,21 @@ function download(bytes, filename, mime = "application/octet-stream") {
 
 function exportMesh(format) {
   if (!parser || busy) return;
-  if (format === "obj" && Open3SDCM.FS.analyzePath(OUTPUT_DIR).exists) {
-    for (const entry of Open3SDCM.FS.readdir(OUTPUT_DIR)) {
-      if (entry === `${currentName}.mtl` || entry.startsWith(`${currentName}_texture`)) {
-        Open3SDCM.FS.unlink(`${OUTPUT_DIR}/${entry}`);
-      }
-    }
-  }
+  const mainName = `${currentName}.${format}`;
   const main = parser.exportMeshBytes(format, currentName).slice();
   if (!main.length) {
     setStatus(`Export failed: the mesh could not be written as ${format.toUpperCase()}.`, true);
     return;
   }
-  download(main, `${currentName}.${format === "stlb" ? "stl" : format}`);
+  download(main, mainName);
 
   // OBJ carries colour through companion files (.mtl + texture image), which
-  // the library writes next to the .obj in the virtual filesystem. The
-  // directory also holds exports from the other buttons, so filter to this
-  // scan's OBJ companions only.
+  // the library writes next to the .obj. The bindings empty the directory
+  // before every export, so everything else in it belongs to this OBJ.
   if (format === "obj") {
     for (const entry of Open3SDCM.FS.readdir(OUTPUT_DIR)) {
-      if (entry === "." || entry === "..") continue;
-      if (entry === `${currentName}.mtl` || entry.startsWith(`${currentName}_texture`)) {
-        download(parser.readFile(`${OUTPUT_DIR}/${entry}`).slice(), entry);
-      }
+      if (entry === "." || entry === ".." || entry === mainName) continue;
+      download(parser.readFile(`${OUTPUT_DIR}/${entry}`).slice(), entry);
     }
   }
 }
